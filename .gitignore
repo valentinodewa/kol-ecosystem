@@ -11,3 +11,4 @@ Thumbs.db
 __pycache__/
 .venv/
 *.tsbuildinfo
+apps/collector/input/*.csv

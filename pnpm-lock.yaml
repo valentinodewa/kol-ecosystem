@@ -37,6 +37,16 @@ importers:
         specifier: ^4.33.2
         version: 4.143.0(@cloudflare/workers-types@5.20260929.1)(@types/node@24.19.0)
 
+  apps/collector:
+    dependencies:
+      '@kol/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.19.0
+
   apps/dashboard:
     dependencies:
       '@kol/contracts':
