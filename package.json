@@ -1,0 +1,20 @@
+{
+  "name": "kol-ecosystem",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @kol/dashboard --filter @kol/api dev",
+    "dev:dashboard": "pnpm --filter @kol/dashboard dev",
+    "dev:api": "pnpm --filter @kol/api dev",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

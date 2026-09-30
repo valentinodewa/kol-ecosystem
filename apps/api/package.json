@@ -1,0 +1,22 @@
+{
+  "name": "@kol/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "typecheck": "wrangler types && tsc --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.7.2",
+    "@kol/contracts": "workspace:*",
+    "hono": "^4.9.6",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260926.1",
+    "@types/node": "^24.3.0",
+    "wrangler": "^4.33.2"
+  }
+}
