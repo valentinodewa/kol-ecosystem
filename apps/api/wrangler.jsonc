@@ -11,6 +11,9 @@
   "vars": {
     "APP_ENV": "development"
   },
+  "secrets": {
+    "required": ["INGESTION_API_KEY"]
+  },
   "d1_databases": [
     {
       "binding": "DB",

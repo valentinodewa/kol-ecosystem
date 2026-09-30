@@ -1,0 +1,2 @@
+# Salin menjadi `.dev.vars`, lalu ganti dengan nilai acak yang kuat.
+INGESTION_API_KEY="replace-with-a-long-random-secret"
