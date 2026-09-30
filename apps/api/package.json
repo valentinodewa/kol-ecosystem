@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist",
-    "typecheck": "wrangler types && tsc --noEmit --pretty false"
+    "typecheck": "wrangler types && tsc --noEmit --pretty false",
+    "db:migrate:local": "wrangler d1 migrations apply kol-ecosystem-local --local",
+    "db:seed:local": "wrangler d1 execute kol-ecosystem-local --local --file=../../seeds/local.sql"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.7.2",
