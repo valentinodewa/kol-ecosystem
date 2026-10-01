@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { kolApi, type KolInput, type KolRecord } from "./api";
 
 type Page = "home" | "performance" | "daily" | "master" | "monthly" | "missions" | "queries" | "history" | "settings";
 type UploadKind = "registration" | "nmat" | "master" | "monthly";
 type UploadedFile = { name: string; size: string; rows: number };
-type Kol = { upline: string; name: string; tier: string; status: "Aktif" | "Nonaktif"; pic: string };
+type Kol = { id: number; upline: string; name: string; tier: string; status: "Aktif" | "Nonaktif"; pic: string };
 
 const nav: Array<{ id: Page; code: string; label: string }> = [
   { id: "home", code: "OV", label: "Beranda" },
@@ -17,13 +18,14 @@ const nav: Array<{ id: Page; code: string; label: string }> = [
   { id: "settings", code: "ST", label: "Pengaturan" },
 ];
 
-const initialKols: Kol[] = [
-  { upline: "FA582386", name: "Nadia Prameswari", tier: "Growth", status: "Aktif", pic: "Dina" },
-  { upline: "FA660738", name: "Raka Digital", tier: "Growth", status: "Aktif", pic: "Dina" },
-  { upline: "FA489308", name: "Mitra Cuan ID", tier: "Starter", status: "Aktif", pic: "Rizky" },
-  { upline: "FA964008", name: "Kabar UMKM", tier: "Starter", status: "Aktif", pic: "Rizky" },
-  { upline: "FA597568", name: "Ayu Payment", tier: "Growth", status: "Nonaktif", pic: "Dina" },
-];
+const mapKol = (kol: KolRecord): Kol => ({
+  id: kol.id,
+  upline: kol.uplineId,
+  name: kol.name,
+  tier: kol.tierCode ?? "Belum diatur",
+  status: kol.status === "active" ? "Aktif" : "Nonaktif",
+  pic: kol.picName ?? "—",
+});
 
 function fileSize(bytes: number) {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
@@ -68,13 +70,47 @@ export function App() {
   const [periodEnd, setPeriodEnd] = useState("2026-09-30");
   const [validated, setValidated] = useState(false);
   const [search, setSearch] = useState("");
-  const [kols, setKols] = useState(initialKols);
+  const [kols, setKols] = useState<Kol[]>([]);
+  const [masterLoading, setMasterLoading] = useState(true);
+  const [masterSaving, setMasterSaving] = useState(false);
+  const [masterError, setMasterError] = useState<string | null>(null);
+  const [masterNotice, setMasterNotice] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingKol, setEditingKol] = useState<Kol | null>(null);
   const [showMissionForm, setShowMissionForm] = useState(false);
   const [monthlyPreview, setMonthlyPreview] = useState(false);
 
   const visibleKols = useMemo(() => kols.filter((kol) => `${kol.upline} ${kol.name} ${kol.tier}`.toLowerCase().includes(search.toLowerCase())), [kols, search]);
+  const activeKolCount = kols.filter((kol) => kol.status === "Aktif").length;
+  const tierCount = new Set(kols.map((kol) => kol.tier).filter((tier) => tier !== "Belum diatur")).size;
+
+  useEffect(() => {
+    void kolApi.list()
+      .then(({ items }) => { setKols(items.map(mapKol)); setMasterError(null); })
+      .catch((error: unknown) => setMasterError(error instanceof Error ? error.message : "Master KOL gagal dimuat"))
+      .finally(() => setMasterLoading(false));
+  }, []);
+
+  async function saveKol(form: HTMLFormElement) {
+    const data = new FormData(form);
+    const input: KolInput = {
+      uplineId: String(data.get("upline")).trim().toUpperCase(),
+      name: String(data.get("name")).trim(),
+      tierCode: String(data.get("tier")) || null,
+      picName: String(data.get("pic")).trim() || null,
+      status: data.get("status") === "Aktif" ? "active" : "inactive",
+    };
+    setMasterSaving(true); setMasterError(null); setMasterNotice(null);
+    try {
+      const saved = editingKol ? await kolApi.update(editingKol.id, input) : await kolApi.create(input);
+      const mapped = mapKol(saved);
+      setKols((current) => editingKol ? current.map((kol) => kol.id === mapped.id ? mapped : kol) : [mapped, ...current]);
+      setMasterNotice(editingKol ? "Data KOL berhasil diperbarui." : "KOL baru berhasil ditambahkan.");
+      setShowForm(false); setEditingKol(null);
+    } catch (error) {
+      setMasterError(error instanceof Error ? error.message : "Data KOL gagal disimpan");
+    } finally { setMasterSaving(false); }
+  }
 
   async function addFile(kind: UploadKind, file: File) {
     setFiles((current) => ({ ...current, [kind]: undefined }));
@@ -130,12 +166,14 @@ export function App() {
         {showMissionForm&&<div className="modal-backdrop" onMouseDown={()=>setShowMissionForm(false)}><form className="modal mission-modal" onMouseDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();setShowMissionForm(false)}}><div className="modal-heading"><div><p className="eyebrow">MISSION BUILDER</p><h2>Buat mission baru</h2><p>Atur peserta, periode, dan indikator keberhasilan.</p></div><button type="button" onClick={()=>setShowMissionForm(false)}>×</button></div><label>Nama mission<input placeholder="Contoh: November Growth Challenge" required/></label><div className="form-row"><label>Tier peserta<select><option>Starter</option><option>Growth</option><option>Champion</option></select></label><label>Status<select><option>Draft</option><option>Aktif</option></select></label></div><div className="form-row"><label>Tanggal mulai<input type="date" defaultValue="2026-11-01"/></label><label>Tanggal selesai<input type="date" defaultValue="2026-11-30"/></label></div><div className="target-builder"><div><label>Metrik<select><option>NMAT</option><option>Register</option><option>Aktif</option><option>Transaksi</option><option>Revenue</option></select></label><label>Target<input type="number" defaultValue="50"/></label></div><button type="button" className="text-button">+ Tambah target</button></div><label>Deskripsi<input placeholder="Tujuan singkat mission"/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={()=>setShowMissionForm(false)}>Batal</button><button className="primary-button">Simpan sebagai draft</button></div></form></div>}
       </main>}
       {page === "master" && <main><Header title="Master KOL" subtitle="Kelola identitas KOL yang menjadi acuan query, tiering, mission, dan dashboard." />
-        <section className="master-summary"><div><span>72</span><p>Total KOL</p></div><div><span>70</span><p>Aktif</p></div><div><span>2</span><p>Nonaktif</p></div><div><span>3</span><p>Tier tersedia</p></div></section>
+        <section className="master-summary"><div><span>{kols.length}</span><p>Total KOL</p></div><div><span>{activeKolCount}</span><p>Aktif</p></div><div><span>{kols.length-activeKolCount}</span><p>Nonaktif</p></div><div><span>{tierCount}</span><p>Tier tersedia</p></div></section>
         <section className="panel master-panel"><div className="master-toolbar"><div className="search"><span>⌕</span><input placeholder="Cari nama, upline, atau tier…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><div><label className="import-button">Import CSV<input type="file" accept=".csv" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && void addFile("master", event.target.files[0])} /></label><button className="primary-button" onClick={() => { setEditingKol(null); setShowForm(true); }}>+ Tambah KOL</button></div></div>
+          {masterError && <div className="api-message api-error"><strong>Gagal</strong><span>{masterError}</span></div>}
+          {masterNotice && <div className="api-message api-success"><strong>Berhasil</strong><span>{masterNotice}</span></div>}
           {files.master && <div className="import-preview"><span>CSV siap diperiksa</span><strong>{files.master.name}</strong><small>{files.master.rows} baris · belum disimpan</small><button className="text-button">Lihat preview</button></div>}
-          <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>PIC</th><th>Status</th><th /></tr></thead><tbody>{visibleKols.map((kol) => <tr key={kol.upline}><td><strong className="upline">{kol.upline}</strong></td><td><div className="person"><span>{kol.name.slice(0, 2).toUpperCase()}</span><strong>{kol.name}</strong></div></td><td><span className={`tier tier-${kol.tier.toLowerCase()}`}>{kol.tier}</span></td><td>{kol.pic}</td><td><span className={`status status-${kol.status.toLowerCase()}`}>{kol.status}</span></td><td><button className="edit-button" onClick={() => { setEditingKol(kol); setShowForm(true); }}>Edit</button></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleKols.length} dari 72 KOL</span><div><button disabled>←</button><button className="selected">1</button><button>2</button><button>3</button><button>→</button></div></div>
+          <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>PIC</th><th>Status</th><th /></tr></thead><tbody>{masterLoading ? <tr><td colSpan={6}>Memuat data staging…</td></tr> : visibleKols.length === 0 ? <tr><td colSpan={6}>Belum ada data KOL yang sesuai.</td></tr> : visibleKols.map((kol) => <tr key={kol.id}><td><strong className="upline">{kol.upline}</strong></td><td><div className="person"><span>{kol.name.slice(0, 2).toUpperCase()}</span><strong>{kol.name}</strong></div></td><td><span className={`tier tier-${kol.tier.toLowerCase().replaceAll(" ", "-")}`}>{kol.tier}</span></td><td>{kol.pic}</td><td><span className={`status status-${kol.status.toLowerCase()}`}>{kol.status}</span></td><td><button className="edit-button" onClick={() => { setEditingKol(kol); setShowForm(true); }}>Edit</button></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleKols.length} dari {kols.length} KOL</span></div>
         </section>
-        {showForm && <div className="modal-backdrop" onMouseDown={() => setShowForm(false)}><form className="modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const next: Kol = { upline: String(data.get("upline")), name: String(data.get("name")), tier: String(data.get("tier")), pic: String(data.get("pic")), status: String(data.get("status")) as Kol["status"] }; setKols((current) => editingKol ? current.map((kol) => kol.upline === editingKol.upline ? next : kol) : [next, ...current]); setShowForm(false); setEditingKol(null); }}><div className="modal-heading"><div><p className="eyebrow">MASTER KOL</p><h2>{editingKol ? "Edit data KOL" : "Tambah KOL baru"}</h2><p>Data hanya tersimpan sementara pada prototype.</p></div><button type="button" onClick={() => setShowForm(false)}>×</button></div><label>Upline ID<input name="upline" placeholder="Contoh: FA582386" defaultValue={editingKol?.upline} required /></label>{editingKol && <div className="id-warning">Perubahan ID akan membutuhkan konfirmasi histori pada versi final.</div>}<label>Nama KOL<input name="name" placeholder="Nama lengkap atau nama channel" defaultValue={editingKol?.name} required /></label><div className="form-row"><label>Tier<select name="tier" defaultValue={editingKol?.tier ?? "Starter"}><option>Starter</option><option>Growth</option><option>Champion</option></select></label><label>PIC<input name="pic" placeholder="Nama PIC" defaultValue={editingKol?.pic} required /></label></div><label>Status<select name="status" defaultValue={editingKol?.status ?? "Aktif"}><option>Aktif</option><option>Nonaktif</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Batal</button><button className="primary-button" type="submit">{editingKol ? "Simpan perubahan" : "Tambah ke daftar"}</button></div></form></div>}
+        {showForm && <div className="modal-backdrop" onMouseDown={() => !masterSaving && setShowForm(false)}><form className="modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveKol(event.currentTarget); }}><div className="modal-heading"><div><p className="eyebrow">MASTER KOL</p><h2>{editingKol ? "Edit data KOL" : "Tambah KOL baru"}</h2><p>Perubahan akan langsung disimpan ke database staging.</p></div><button type="button" disabled={masterSaving} onClick={() => setShowForm(false)}>×</button></div><label>Upline ID<input name="upline" placeholder="Contoh: FA582386" defaultValue={editingKol?.upline} required /></label>{editingKol && <div className="id-warning">Perubahan Upline ID ikut tercatat dalam audit log.</div>}<label>Nama KOL<input name="name" placeholder="Nama lengkap atau nama channel" defaultValue={editingKol?.name} required /></label><div className="form-row"><label>Tier<select name="tier" defaultValue={editingKol?.tier === "Belum diatur" ? "" : editingKol?.tier ?? "Starter"}><option value="">Belum diatur</option><option>Starter</option><option>Growth</option><option>Champion</option></select></label><label>PIC<input name="pic" placeholder="Nama PIC" defaultValue={editingKol?.pic === "—" ? "" : editingKol?.pic} /></label></div><label>Status<select name="status" defaultValue={editingKol?.status ?? "Aktif"}><option>Aktif</option><option>Nonaktif</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" disabled={masterSaving} onClick={() => setShowForm(false)}>Batal</button><button className="primary-button" disabled={masterSaving} type="submit">{masterSaving ? "Menyimpan…" : editingKol ? "Simpan perubahan" : "Tambah ke daftar"}</button></div></form></div>}
       </main>}
       {["queries", "history", "settings"].includes(page) && <main><Header title={nav.find((item) => item.id === page)?.label ?? "Segera hadir"} subtitle="Halaman ini disiapkan untuk fase pengembangan berikutnya." /><section className="coming-soon"><span>{nav.find((item) => item.id === page)?.code}</span><h2>Fondasinya sudah disiapkan.</h2><p>Kita akan mengaktifkan fungsi ini setelah alur Update Performa dan Master KOL disetujui.</p><button className="secondary-button" onClick={() => choosePage("home")}>Kembali ke beranda</button></section></main>}
     </div>
