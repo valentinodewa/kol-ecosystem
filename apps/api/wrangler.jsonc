@@ -1,25 +1,50 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "kol-ecosystem-api",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-09-30",
-  "compatibility_flags": ["nodejs_compat"],
-  "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1
-  },
-  "vars": {
-    "APP_ENV": "development"
-  },
-  "secrets": {
-    "required": ["INGESTION_API_KEY"]
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "kol-ecosystem-local",
-      "database_id": "00000000-0000-0000-0000-000000000001",
-      "migrations_dir": "../../migrations"
-    }
-  ]
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "kol-ecosystem-api",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-30",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"vars": {
+		"APP_ENV": "development"
+	},
+	"secrets": {
+		"required": [
+			"INGESTION_API_KEY"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "kol-ecosystem-local",
+			"database_id": "00000000-0000-0000-0000-000000000001",
+			"migrations_dir": "../../migrations"
+		}
+	],
+	"env": {
+		"staging": {
+			"name": "kol-ecosystem-api-staging",
+			"vars": {
+				"APP_ENV": "staging"
+			},
+			"secrets": {
+				"required": [
+					"INGESTION_API_KEY"
+				]
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "kol-ecosystem-staging",
+					"database_id": "0006b07e-33a6-44e0-b31b-8d4c32319eff",
+					"migrations_dir": "../../migrations"
+				}
+			]
+		}
+	}
 }
