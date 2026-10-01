@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
 import { timingSafeEqual } from "node:crypto";
 import {
@@ -10,6 +11,17 @@ import {
 } from "@kol/contracts";
 
 const app = new Hono<{ Bindings: Env }>();
+
+const publicReadCors = cors({
+  origin: "*",
+  allowMethods: ["GET"],
+  allowHeaders: ["Accept"],
+  maxAge: 86400,
+});
+
+app.use("/api/v1/health", publicReadCors);
+app.use("/api/v1/db/health", publicReadCors);
+app.use("/api/v1/performance", publicReadCors);
 
 type PerformanceRow = {
   upline_id: string;
