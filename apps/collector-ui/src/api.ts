@@ -34,7 +34,7 @@ export type DailyPerformanceRow = {
 };
 
 const remoteApi = import.meta.env.VITE_API_URL || "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
-const tokenKey = "kol-operator-token";
+const tokenKey = "kol-auth-token-v2";
 
 function sessionToken() { return sessionStorage.getItem(tokenKey); }
 
@@ -78,7 +78,7 @@ export const authApi = {
     if (!response.ok || !body.token || !body.user) throw new Error(body.message ?? "Login gagal");
     sessionStorage.setItem(tokenKey, body.token); sessionStorage.setItem("kol-operator-user", body.user.username); sessionStorage.setItem("kol-operator-role", body.user.role); return body.user;
   },
-  logout: () => { sessionStorage.removeItem(tokenKey); sessionStorage.removeItem("kol-operator-user"); sessionStorage.removeItem("kol-operator-role"); },
+  logout: () => { sessionStorage.removeItem(tokenKey); sessionStorage.removeItem("kol-operator-token"); sessionStorage.removeItem("kol-operator-user"); sessionStorage.removeItem("kol-operator-role"); },
   username: () => sessionStorage.getItem("kol-operator-user"),
   role: () => sessionStorage.getItem("kol-operator-role"),
 };

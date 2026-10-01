@@ -111,7 +111,7 @@ function DropZone({ kind, title, hint, file, onFile, workbook = false }: { kind:
 }
 
 function Header({ title, subtitle }: { title: string; subtitle: string }) {
-  return <header className="page-header"><div><p className="eyebrow">KOL OPERATIONS</p><h1>{title}</h1><p>{subtitle}</p></div><div className="connection"><span />API staging terhubung</div></header>;
+  return <header className="page-header"><div><p className="eyebrow">KOL OPERATIONS</p><h1>{title}</h1><p>{subtitle}</p></div><div className="header-session"><div className="connection"><span />API staging terhubung</div><div className="session-user"><strong>{authApi.username() ?? "Local admin"}</strong><small>{authApi.role() === "admin" ? "Super admin" : authApi.role() === "operator" ? "Operator" : "Administrator"}</small></div><button className="header-logout" onClick={() => { authApi.logout(); location.reload(); }}>Keluar</button></div></header>;
 }
 
 export function App() {
