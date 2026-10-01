@@ -119,6 +119,13 @@ export const kolUpdateRequestSchema = kolCreateRequestSchema.partial().refine(
   { message: "Minimal satu field harus diubah" },
 );
 
+export const kolImportRequestSchema = z.object({
+  rows: z.array(kolCreateRequestSchema).min(1).max(100),
+}).refine((value) => new Set(value.rows.map((row) => row.uplineId)).size === value.rows.length, {
+  message: "Upline ID tidak boleh duplikat dalam satu file",
+  path: ["rows"],
+});
+
 export const kolListResponseSchema = z.object({ items: z.array(kolRecordSchema) });
 
 export const rosterRowSchema = z.object({
@@ -214,6 +221,7 @@ export const dailyPerformanceIngestionRequestSchema = z.object({
 export type KolRecord = z.infer<typeof kolRecordSchema>;
 export type KolCreateRequest = z.infer<typeof kolCreateRequestSchema>;
 export type KolUpdateRequest = z.infer<typeof kolUpdateRequestSchema>;
+export type KolImportRequest = z.infer<typeof kolImportRequestSchema>;
 export type RosterReplaceRequest = z.infer<typeof rosterReplaceRequestSchema>;
 export type RosterResponse = z.infer<typeof rosterResponseSchema>;
 export type MissionCreateRequest = z.infer<typeof missionCreateRequestSchema>;

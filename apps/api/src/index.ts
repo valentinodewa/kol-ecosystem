@@ -8,6 +8,7 @@ import {
   dailyPerformanceListResponseSchema,
   dailyPerformanceQuerySchema,
   kolCreateRequestSchema,
+  kolImportRequestSchema,
   kolListResponseSchema,
   kolRecordSchema,
   kolUpdateRequestSchema,
@@ -213,6 +214,23 @@ app.post("/api/v1/admin/kols", zValidator("json", kolCreateRequestSchema), async
      FROM kols WHERE upline_id = ?`,
   ).bind(input.uplineId).first<KolRow>();
   return context.json(kolRecordSchema.parse(mapKol(row!)), 201);
+});
+
+app.post("/api/v1/admin/kols/import", zValidator("json", kolImportRequestSchema), async (context) => {
+  const { rows } = context.req.valid("json");
+  const now = new Date().toISOString();
+  const statements = rows.map((row) => context.env.DB.prepare(
+    `INSERT INTO kols (upline_id, name, status, tier_code, joined_at, contact, pic_name, notes, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+     ON CONFLICT(upline_id) DO UPDATE SET name=excluded.name, status=excluded.status,
+       tier_code=excluded.tier_code, joined_at=excluded.joined_at, contact=excluded.contact,
+       pic_name=excluded.pic_name, notes=excluded.notes, updated_at=excluded.updated_at`,
+  ).bind(row.uplineId, row.name, row.status, row.tierCode ?? null, row.joinedAt ?? null, row.contact ?? null, row.picName ?? null, row.notes ?? null, now));
+  statements.push(context.env.DB.prepare(
+    `INSERT INTO audit_logs (action, entity_type, entity_id, after_json) VALUES ('import', 'kol', 'batch', ?1)`,
+  ).bind(JSON.stringify({ rowCount: rows.length, uplines: rows.map((row) => row.uplineId) })));
+  await context.env.DB.batch(statements);
+  return context.json({ status: "accepted", processedKols: rows.length });
 });
 
 app.patch("/api/v1/admin/kols/:id", zValidator("json", kolUpdateRequestSchema), async (context) => {

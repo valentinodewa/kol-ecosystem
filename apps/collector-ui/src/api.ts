@@ -31,4 +31,5 @@ export const kolApi = {
   list: () => request<{ items: KolRecord[] }>("/kols"),
   create: (input: KolInput) => request<KolRecord>("/kols", { method: "POST", body: JSON.stringify(input) }),
   update: (id: number, input: KolInput) => request<KolRecord>(`/kols/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  import: (rows: KolInput[]) => request<{ status: string; processedKols: number }>("/kols/import", { method: "POST", body: JSON.stringify({ rows }) }),
 };

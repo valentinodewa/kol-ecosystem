@@ -37,6 +37,35 @@ async function inspectCsv(file: File): Promise<UploadedFile> {
   return { name: file.name, size: fileSize(file.size), rows: Math.max(0, rows - 1) };
 }
 
+function parseCsvLine(line: string) {
+  const values: string[] = []; let value = ""; let quoted = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (char === '"' && quoted && line[index + 1] === '"') { value += '"'; index++; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === "," && !quoted) { values.push(value.trim()); value = ""; }
+    else value += char;
+  }
+  values.push(value.trim()); return values;
+}
+
+async function parseMasterCsv(file: File): Promise<KolInput[]> {
+  const lines = (await file.text()).replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+  const headers = parseCsvLine(lines[0] ?? "").map((header) => header.toLowerCase());
+  for (const required of ["upline_id", "name"]) if (!headers.includes(required)) throw new Error(`Kolom wajib tidak ditemukan: ${required}`);
+  const rows = lines.slice(1).map((line, index) => {
+    const values = parseCsvLine(line); const get = (name: string) => values[headers.indexOf(name)]?.trim() ?? "";
+    const status = get("status").toLowerCase();
+    const uplineId = get("upline_id").toUpperCase(); const name = get("name");
+    if (!uplineId || !name) throw new Error(`Baris ${index + 2}: upline_id dan name wajib diisi`);
+    return { uplineId, name, tierCode: get("tier_code") || null, picName: get("pic_name") || null, status: status === "inactive" || status === "nonaktif" ? "inactive" as const : "active" as const };
+  });
+  if (!rows.length) throw new Error("CSV tidak memiliki baris data");
+  if (rows.length > 100) throw new Error("Maksimal 100 KOL per sekali import");
+  if (new Set(rows.map((row) => row.uplineId)).size !== rows.length) throw new Error("Ada upline_id duplikat di CSV");
+  return rows;
+}
+
 function DropZone({ kind, title, hint, file, onFile }: { kind: UploadKind; title: string; hint: string; file?: UploadedFile; onFile: (kind: UploadKind, file: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const receive = (event: DragEvent<HTMLDivElement>) => {
@@ -75,6 +104,7 @@ export function App() {
   const [masterSaving, setMasterSaving] = useState(false);
   const [masterError, setMasterError] = useState<string | null>(null);
   const [masterNotice, setMasterNotice] = useState<string | null>(null);
+  const [masterImportRows, setMasterImportRows] = useState<KolInput[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingKol, setEditingKol] = useState<Kol | null>(null);
   const [showMissionForm, setShowMissionForm] = useState(false);
@@ -114,9 +144,26 @@ export function App() {
 
   async function addFile(kind: UploadKind, file: File) {
     setFiles((current) => ({ ...current, [kind]: undefined }));
-    const inspected = await inspectCsv(file);
-    setFiles((current) => ({ ...current, [kind]: inspected }));
+    try {
+      const inspected = await inspectCsv(file);
+      if (kind === "master") setMasterImportRows(await parseMasterCsv(file));
+      setFiles((current) => ({ ...current, [kind]: inspected }));
+      setMasterError(null);
+    } catch (error) {
+      if (kind === "master") { setMasterImportRows([]); setMasterError(error instanceof Error ? error.message : "CSV tidak valid"); }
+    }
     setValidated(false);
+  }
+
+  async function importMasterKols() {
+    setMasterSaving(true); setMasterError(null); setMasterNotice(null);
+    try {
+      const result = await kolApi.import(masterImportRows);
+      const latest = await kolApi.list(); setKols(latest.items.map(mapKol));
+      setMasterNotice(`${result.processedKols} KOL berhasil diimpor atau diperbarui.`);
+      setFiles((current) => ({ ...current, master: undefined })); setMasterImportRows([]);
+    } catch (error) { setMasterError(error instanceof Error ? error.message : "Import gagal"); }
+    finally { setMasterSaving(false); }
   }
 
   function choosePage(next: Page) { setPage(next); setMobileOpen(false); }
@@ -170,7 +217,7 @@ export function App() {
         <section className="panel master-panel"><div className="master-toolbar"><div className="search"><span>⌕</span><input placeholder="Cari nama, upline, atau tier…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><div><label className="import-button">Import CSV<input type="file" accept=".csv" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && void addFile("master", event.target.files[0])} /></label><button className="primary-button" onClick={() => { setEditingKol(null); setShowForm(true); }}>+ Tambah KOL</button></div></div>
           {masterError && <div className="api-message api-error"><strong>Gagal</strong><span>{masterError}</span></div>}
           {masterNotice && <div className="api-message api-success"><strong>Berhasil</strong><span>{masterNotice}</span></div>}
-          {files.master && <div className="import-preview"><span>CSV siap diperiksa</span><strong>{files.master.name}</strong><small>{files.master.rows} baris · belum disimpan</small><button className="text-button">Lihat preview</button></div>}
+          {files.master && <div className="import-preview"><span>CSV lolos validasi</span><strong>{files.master.name}</strong><small>{masterImportRows.length} baris · upsert berdasarkan upline_id</small><button className="text-button" disabled={masterSaving} onClick={() => void importMasterKols()}>{masterSaving ? "Mengimpor…" : "Import ke database"}</button></div>}
           <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>PIC</th><th>Status</th><th /></tr></thead><tbody>{masterLoading ? <tr><td colSpan={6}>Memuat data staging…</td></tr> : visibleKols.length === 0 ? <tr><td colSpan={6}>Belum ada data KOL yang sesuai.</td></tr> : visibleKols.map((kol) => <tr key={kol.id}><td><strong className="upline">{kol.upline}</strong></td><td><div className="person"><span>{kol.name.slice(0, 2).toUpperCase()}</span><strong>{kol.name}</strong></div></td><td><span className={`tier tier-${kol.tier.toLowerCase().replaceAll(" ", "-")}`}>{kol.tier}</span></td><td>{kol.pic}</td><td><span className={`status status-${kol.status.toLowerCase()}`}>{kol.status}</span></td><td><button className="edit-button" onClick={() => { setEditingKol(kol); setShowForm(true); }}>Edit</button></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleKols.length} dari {kols.length} KOL</span></div>
         </section>
         {showForm && <div className="modal-backdrop" onMouseDown={() => !masterSaving && setShowForm(false)}><form className="modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveKol(event.currentTarget); }}><div className="modal-heading"><div><p className="eyebrow">MASTER KOL</p><h2>{editingKol ? "Edit data KOL" : "Tambah KOL baru"}</h2><p>Perubahan akan langsung disimpan ke database staging.</p></div><button type="button" disabled={masterSaving} onClick={() => setShowForm(false)}>×</button></div><label>Upline ID<input name="upline" placeholder="Contoh: FA582386" defaultValue={editingKol?.upline} required /></label>{editingKol && <div className="id-warning">Perubahan Upline ID ikut tercatat dalam audit log.</div>}<label>Nama KOL<input name="name" placeholder="Nama lengkap atau nama channel" defaultValue={editingKol?.name} required /></label><div className="form-row"><label>Tier<select name="tier" defaultValue={editingKol?.tier === "Belum diatur" ? "" : editingKol?.tier ?? "Starter"}><option value="">Belum diatur</option><option>Starter</option><option>Growth</option><option>Champion</option></select></label><label>PIC<input name="pic" placeholder="Nama PIC" defaultValue={editingKol?.pic === "—" ? "" : editingKol?.pic} /></label></div><label>Status<select name="status" defaultValue={editingKol?.status ?? "Aktif"}><option>Aktif</option><option>Nonaktif</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" disabled={masterSaving} onClick={() => setShowForm(false)}>Batal</button><button className="primary-button" disabled={masterSaving} type="submit">{masterSaving ? "Menyimpan…" : editingKol ? "Simpan perubahan" : "Tambah ke daftar"}</button></div></form></div>}
