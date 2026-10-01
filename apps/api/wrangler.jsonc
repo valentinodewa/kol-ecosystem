@@ -15,7 +15,8 @@
 	},
 	"secrets": {
 		"required": [
-			"INGESTION_API_KEY"
+			"INGESTION_API_KEY",
+			"ADMIN_API_KEY"
 		]
 	},
 	"d1_databases": [
@@ -34,7 +35,8 @@
 			},
 			"secrets": {
 				"required": [
-					"INGESTION_API_KEY"
+					"INGESTION_API_KEY",
+					"ADMIN_API_KEY"
 				]
 			},
 			"d1_databases": [
