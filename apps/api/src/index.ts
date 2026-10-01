@@ -15,6 +15,7 @@ import {
   kolRecordSchema,
   kolUpdateRequestSchema,
   missionCreateRequestSchema,
+  missionUpdateRequestSchema,
   missionListResponseSchema,
   missionRecordSchema,
   performanceIngestionRequestSchema,
@@ -251,6 +252,13 @@ app.get("/api/v1/admin/kols", async (context) => {
   return context.json(kolListResponseSchema.parse({ items: result.results.map(mapKol) }));
 });
 
+app.get("/api/v1/admin/google-master.csv", async (context) => {
+  const source = "https://docs.google.com/spreadsheets/d/1ceau9G_gDVZ7HGOcieTqAdxKprSXfNe2R1AzxsMXupI/export?format=csv&gid=612187701";
+  const response = await fetch(source, { headers: { "User-Agent": "KOL-Ecosystem/1.0" } });
+  if (!response.ok) return context.json({ error: "google_sheet_unavailable", message: `Google Sheet gagal dibaca (${response.status})` }, 502);
+  return new Response(await response.text(), { headers: { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store" } });
+});
+
 app.post("/api/v1/admin/kols", zValidator("json", kolCreateRequestSchema), async (context) => {
   const input = context.req.valid("json");
   const now = new Date().toISOString();
@@ -400,6 +408,24 @@ app.post("/api/v1/admin/missions", zValidator("json", missionCreateRequestSchema
   const participant = await context.env.DB.prepare("SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id = ?").bind(id).first<{ count: number }>();
   const now = new Date().toISOString();
   return context.json(missionRecordSchema.parse({ id, ...input, description: input.description ?? null, rewardDescription: input.rewardDescription ?? null, participantCount: participant?.count ?? 0, createdAt: now, updatedAt: now }), 201);
+});
+
+app.patch("/api/v1/admin/missions/:id", zValidator("json", missionUpdateRequestSchema), async (context) => {
+  const id = context.req.param("id"); const input = context.req.valid("json");
+  const current = await context.env.DB.prepare("SELECT * FROM missions WHERE id=?1").bind(id).first<MissionDbRow>();
+  if (!current) return context.json({ error: "not_found", message: "Mission tidak ditemukan" }, 404);
+  const merged = { name: input.name ?? current.name, description: input.description === undefined ? current.description : input.description, tierCode: input.tierCode ?? current.tier_code, startDate: input.startDate ?? current.start_date, endDate: input.endDate ?? current.end_date, rewardDescription: input.rewardDescription === undefined ? current.reward_description : input.rewardDescription, status: input.status ?? current.status };
+  const statements: D1PreparedStatement[] = [context.env.DB.prepare(
+    `UPDATE missions SET name=?1, description=?2, tier_code=?3, start_date=?4, end_date=?5, reward_description=?6, status=?7, updated_at=?8 WHERE id=?9`,
+  ).bind(merged.name, merged.description ?? null, merged.tierCode, merged.startDate, merged.endDate, merged.rewardDescription ?? null, merged.status, new Date().toISOString(), id)];
+  if (input.targets) {
+    statements.push(context.env.DB.prepare("DELETE FROM mission_targets WHERE mission_id=?1").bind(id));
+    input.targets.forEach((target, index) => statements.push(context.env.DB.prepare("INSERT INTO mission_targets (mission_id, metric, target_value, position) VALUES (?1,?2,?3,?4)").bind(id, target.metric, target.targetValue, index)));
+  }
+  await context.env.DB.batch(statements);
+  const targets = await context.env.DB.prepare("SELECT metric, target_value FROM mission_targets WHERE mission_id=?1 ORDER BY position,id").bind(id).all<{ metric: "registered"|"active"|"nmat"|"transactions"|"revenue"; target_value: number }>();
+  const participant = await context.env.DB.prepare("SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id=?1").bind(id).first<{ count:number }>();
+  return context.json(missionRecordSchema.parse({ id, ...merged, targets: targets.results.map((target)=>({metric:target.metric,targetValue:target.target_value})), participantCount: participant?.count ?? 0, createdAt: current.created_at, updatedAt: new Date().toISOString() }));
 });
 
 app.get("/api/v1/admin/performance/daily", zValidator("query", dailyPerformanceQuerySchema), async (context) => {

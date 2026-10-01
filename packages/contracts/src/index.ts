@@ -166,6 +166,19 @@ export const missionCreateRequestSchema = z.object({
   message: "endDate tidak boleh lebih awal dari startDate",
   path: ["endDate"],
 });
+export const missionUpdateRequestSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().max(1000).nullable().optional(),
+  tierCode: tierCodeSchema.optional(),
+  startDate: isoDateSchema.optional(),
+  endDate: isoDateSchema.optional(),
+  rewardDescription: z.string().trim().max(500).nullable().optional(),
+  status: z.enum(["draft", "active", "completed", "cancelled"]).optional(),
+  targets: z.array(missionTargetSchema).min(1).max(5).optional(),
+}).refine(
+  (value) => Object.keys(value).length > 0,
+  { message: "Minimal satu field mission harus diubah" },
+);
 
 export const missionRecordSchema = missionCreateRequestSchema.extend({
   id: z.uuid(),

@@ -32,6 +32,9 @@ export type DailyPerformanceRow = {
   totalActivationRevenue: number;
   syncedAt: string;
 };
+export type MissionTarget = { metric: "registered" | "active" | "nmat" | "transactions" | "revenue"; targetValue: number };
+export type MissionRecord = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "draft" | "active" | "completed" | "cancelled"; participantCount: number; targets: MissionTarget[]; createdAt: string; updatedAt: string };
+export type MissionInput = Omit<MissionRecord, "id" | "participantCount" | "createdAt" | "updatedAt">;
 
 const remoteApi = "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
 const tokenKey = "kol-auth-token-v2";
@@ -59,6 +62,11 @@ export const kolApi = {
   create: (input: KolInput) => request<KolRecord>("/kols", { method: "POST", body: JSON.stringify(input) }, true),
   update: (id: number, input: KolInput) => request<KolRecord>(`/kols/${id}`, { method: "PATCH", body: JSON.stringify(input) }, true),
   import: (rows: KolInput[]) => request<{ status: string; processedKols: number }>("/kols/import", { method: "POST", body: JSON.stringify({ rows }) }, true),
+  googleMaster: async () => {
+    const token = sessionToken(); const response = await fetch(`${remoteApi}/api/v1/admin/google-master.csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!response.ok) { const body = await response.json().catch(()=>null) as {message?:string}|null; throw new Error(body?.message ?? `Google Sheet gagal dibaca (${response.status})`); }
+    return response.text();
+  },
 };
 
 export const performanceApi = {
@@ -81,4 +89,10 @@ export const authApi = {
   logout: () => { sessionStorage.removeItem(tokenKey); sessionStorage.removeItem("kol-operator-token"); sessionStorage.removeItem("kol-operator-user"); sessionStorage.removeItem("kol-operator-role"); },
   username: () => sessionStorage.getItem("kol-operator-user"),
   role: () => sessionStorage.getItem("kol-operator-role"),
+};
+
+export const missionApi = {
+  list: () => request<{ items: MissionRecord[] }>("/missions", undefined, true),
+  create: (input: MissionInput) => request<MissionRecord>("/missions", { method: "POST", body: JSON.stringify(input) }, true),
+  update: (id: string, input: Partial<MissionInput>) => request<MissionRecord>(`/missions/${id}`, { method: "PATCH", body: JSON.stringify(input) }, true),
 };

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { authApi, kolApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolRecord } from "./api";
+import { authApi, kolApi, missionApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolRecord, type MissionInput, type MissionRecord } from "./api";
 import { mergeWorkbooks, parseFinancialWorkbook, parseNmatWorkbook, parseRegistrationWorkbook, type ImportRow } from "./workbooks";
 
 type Page = "home" | "performance" | "daily" | "master" | "monthly" | "missions" | "queries" | "history" | "settings";
@@ -129,6 +129,7 @@ export function App() {
   const [periodEnd, setPeriodEnd] = useState("2026-09-30");
   const [validated, setValidated] = useState(false);
   const [search, setSearch] = useState("");
+  const [tierFilter, setTierFilter] = useState("");
   const [kols, setKols] = useState<Kol[]>([]);
   const [masterLoading, setMasterLoading] = useState(true);
   const [masterSaving, setMasterSaving] = useState(false);
@@ -138,6 +139,10 @@ export function App() {
   const [showForm, setShowForm] = useState(false);
   const [editingKol, setEditingKol] = useState<Kol | null>(null);
   const [showMissionForm, setShowMissionForm] = useState(false);
+  const [missions, setMissions] = useState<MissionRecord[]>([]);
+  const [editingMission, setEditingMission] = useState<MissionRecord | null>(null);
+  const [missionError, setMissionError] = useState<string | null>(null);
+  const [missionSaving, setMissionSaving] = useState(false);
   const [monthlyPreview, setMonthlyPreview] = useState(false);
   const [dailyStart, setDailyStart] = useState("2026-09-01");
   const [dailyEnd, setDailyEnd] = useState("2026-09-30");
@@ -152,9 +157,10 @@ export function App() {
   const [topLoading, setTopLoading] = useState(false);
   const [dailyError, setDailyError] = useState<string | null>(null);
 
-  const visibleKols = useMemo(() => kols.filter((kol) => `${kol.upline} ${kol.name} ${kol.tier}`.toLowerCase().includes(search.toLowerCase())), [kols, search]);
+  const visibleKols = useMemo(() => kols.filter((kol) => (!tierFilter || kol.tier === tierFilter) && `${kol.upline} ${kol.name} ${kol.tier}`.toLowerCase().includes(search.toLowerCase())), [kols, search, tierFilter]);
   const activeKolCount = kols.filter((kol) => kol.status === "Aktif").length;
   const tierCount = new Set(kols.map((kol) => kol.tier).filter((tier) => tier !== "Belum diatur")).size;
+  const tierSummary = useMemo(() => ["BARU","JELEK","BIASA","LUMAYAN","KUAT","Belum diatur"].map((tier)=>({tier,count:kols.filter((kol)=>kol.tier===tier).length})),[kols]);
   const dailySeries = useMemo<DailySummary[]>(() => {
     const grouped = new Map<string, Omit<DailySummary, "cumulativeNmat">>();
     for (const row of dailyRows) {
@@ -198,6 +204,8 @@ export function App() {
       .catch((error: unknown) => setMasterError(error instanceof Error ? error.message : "Master KOL gagal dimuat"))
       .finally(() => setMasterLoading(false));
   }, []);
+
+  useEffect(() => { if (page === "missions") void missionApi.list().then(({items})=>{setMissions(items);setMissionError(null)}).catch((error:unknown)=>setMissionError(error instanceof Error?error.message:"Mission gagal dimuat")); }, [page]);
 
   async function loadDailyPerformance() {
     if (dailyEnd < dailyStart) { setDailyError("Tanggal akhir tidak boleh lebih awal dari tanggal awal"); return; }
@@ -313,14 +321,22 @@ export function App() {
   async function syncGoogleMaster() {
     setMasterSaving(true); setMasterError(null); setMasterNotice(null);
     try {
-      const response = await fetch("/google-master.csv"); if (!response.ok) throw new Error(`Google Sheet gagal dibaca (${response.status})`);
-      const rows = parseGoogleMasterCsv(await response.text()); if (!rows.length) throw new Error("Tidak ada KOL valid pada Google Sheet");
+      const rows = parseGoogleMasterCsv(await kolApi.googleMaster()); if (!rows.length) throw new Error("Tidak ada KOL valid pada Google Sheet");
       let processed = 0;
       for (let index = 0; index < rows.length; index += 100) processed += (await kolApi.import(rows.slice(index, index + 100))).processedKols;
       const latest = await kolApi.list(); setKols(latest.items.map(mapKol));
       setMasterNotice(`${processed} KOL berhasil disinkronkan dari Google Sheet.`);
     } catch (error) { setMasterError(error instanceof Error ? error.message : "Sinkronisasi Google Sheet gagal"); }
     finally { setMasterSaving(false); }
+  }
+
+  async function saveMission(form: HTMLFormElement) {
+    const data = new FormData(form); const metric = String(data.get("metric")) as MissionInput["targets"][number]["metric"];
+    const input: MissionInput = { name:String(data.get("name")).trim(), description:String(data.get("description")).trim()||null, tierCode:String(data.get("tier")), startDate:String(data.get("startDate")), endDate:String(data.get("endDate")), rewardDescription:null, status:String(data.get("status")) as MissionInput["status"], targets:[{metric,targetValue:Number(data.get("target"))}] };
+    setMissionSaving(true); setMissionError(null);
+    try { const saved=editingMission?await missionApi.update(editingMission.id,input):await missionApi.create(input); setMissions((current)=>editingMission?current.map((item)=>item.id===saved.id?saved:item):[saved,...current]); setShowMissionForm(false);setEditingMission(null); }
+    catch(error){setMissionError(error instanceof Error?error.message:"Mission gagal disimpan");}
+    finally{setMissionSaving(false);}
   }
 
   function choosePage(next: Page) { setPage(next); setMobileOpen(false); }
@@ -368,14 +384,14 @@ export function App() {
         {monthlyPreview&&<section className="panel change-preview"><div className="panel-heading"><div><p className="eyebrow">PREVIEW PERUBAHAN</p><h2>Perbandingan dengan September</h2><p>Belum ada perubahan yang disimpan pada mode prototype.</p></div><span className="review-badge">Siap ditinjau</span></div><div className="change-grid"><article><span className="change-new">BARU</span><strong>6 KOL</strong><p>Termasuk FA168621 dan FA761490</p></article><article><span className="change-stay">LANJUT</span><strong>62 KOL</strong><p>Tier 4 KOL berubah bulan ini</p></article><article><span className="change-end">SELESAI</span><strong>10 KOL</strong><p>Tidak masuk roster Oktober</p></article><article><span className="change-alert">PERLU CEK</span><strong>2 ID</strong><p>Belum ditemukan di Master KOL</p></article></div><div className="notice"><strong>Perhatian</strong><span>ID yang belum ada di Master KOL harus dilengkapi sebelum roster dikonfirmasi.</span></div><div className="page-actions"><button className="secondary-button">Kembali</button><button className="primary-button" disabled>Konfirmasi roster</button></div></section>}
       </main>}
       {page === "missions" && <main><Header title="Mission" subtitle="Susun target berdasarkan tier dan pantau mission yang sedang berjalan." />
-        <div className="mission-top"><div className="tabs"><button className="selected">Aktif <span>3</span></button><button>Draft <span>1</span></button><button>Selesai <span>12</span></button></div><button className="primary-button" onClick={()=>setShowMissionForm(true)}>+ Buat mission</button></div>
-        <section className="mission-grid"><article className="mission-card"><div className="mission-card-top"><span className="tier tier-kuat">KUAT</span><span className="live-dot">Aktif</span></div><h2>October Growth Challenge</h2><p>Dorong aktivasi dan transaksi member baru sepanjang Oktober.</p><div className="mission-period">01–31 Oktober 2026</div><div className="mission-targets"><div><small>Target NMAT</small><strong>50</strong></div><div><small>Target transaksi</small><strong>500</strong></div><div><small>Peserta</small><strong>24 KOL</strong></div></div><div className="progress-row"><span>Rata-rata progress</span><strong>68%</strong></div><div className="progress"><i style={{width:"68%"}}/></div><footer><button className="text-button">Lihat progress</button><button className="dots">•••</button></footer></article>
-          <article className="mission-card"><div className="mission-card-top"><span className="tier tier-baru">BARU</span><span className="live-dot">Aktif</span></div><h2>First 10 Active Members</h2><p>Mission onboarding untuk KOL yang baru bergabung.</p><div className="mission-period">01–31 Oktober 2026</div><div className="mission-targets"><div><small>Target aktif</small><strong>10</strong></div><div><small>Target NMAT</small><strong>5</strong></div><div><small>Peserta</small><strong>38 KOL</strong></div></div><div className="progress-row"><span>Rata-rata progress</span><strong>42%</strong></div><div className="progress"><i style={{width:"42%"}}/></div><footer><button className="text-button">Lihat progress</button><button className="dots">•••</button></footer></article>
-          <article className="mission-card"><div className="mission-card-top"><span className="tier tier-lumayan">LUMAYAN</span><span className="live-dot">Aktif</span></div><h2>Revenue Champion</h2><p>Pertahankan kualitas transaksi dan revenue jaringan.</p><div className="mission-period">01 Okt–31 Des 2026</div><div className="mission-targets"><div><small>Target revenue</small><strong>Rp5 jt</strong></div><div><small>Target NMAT</small><strong>150</strong></div><div><small>Peserta</small><strong>6 KOL</strong></div></div><div className="progress-row"><span>Rata-rata progress</span><strong>31%</strong></div><div className="progress"><i style={{width:"31%"}}/></div><footer><button className="text-button">Lihat progress</button><button className="dots">•••</button></footer></article></section>
-        {showMissionForm&&<div className="modal-backdrop" onMouseDown={()=>setShowMissionForm(false)}><form className="modal mission-modal" onMouseDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();setShowMissionForm(false)}}><div className="modal-heading"><div><p className="eyebrow">MISSION BUILDER</p><h2>Buat mission baru</h2><p>Atur peserta, periode, dan indikator keberhasilan.</p></div><button type="button" onClick={()=>setShowMissionForm(false)}>×</button></div><label>Nama mission<input placeholder="Contoh: November Growth Challenge" required/></label><div className="form-row"><label>Tier peserta<select><option>BARU</option><option>JELEK</option><option>BIASA</option><option>LUMAYAN</option><option>KUAT</option></select></label><label>Status<select><option>Draft</option><option>Aktif</option></select></label></div><div className="form-row"><label>Tanggal mulai<input type="date" defaultValue="2026-11-01"/></label><label>Tanggal selesai<input type="date" defaultValue="2026-11-30"/></label></div><div className="target-builder"><div><label>Metrik<select><option>NMAT</option><option>Register</option><option>Aktif</option><option>Transaksi</option><option>Revenue</option></select></label><label>Target<input type="number" defaultValue="50"/></label></div><button type="button" className="text-button">+ Tambah target</button></div><label>Deskripsi<input placeholder="Tujuan singkat mission"/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={()=>setShowMissionForm(false)}>Batal</button><button className="primary-button">Simpan sebagai draft</button></div></form></div>}
+        <div className="mission-top"><div className="tabs"><button className="selected">Semua <span>{missions.length}</span></button><button>Aktif <span>{missions.filter((item)=>item.status==="active").length}</span></button><button>Draft <span>{missions.filter((item)=>item.status==="draft").length}</span></button></div><button className="primary-button" onClick={()=>{setEditingMission(null);setShowMissionForm(true)}}>+ Buat mission</button></div>
+        {missionError&&<div className="api-message api-error"><strong>Gagal</strong><span>{missionError}</span></div>}
+        <section className="mission-grid">{missions.length===0?<div className="empty-state">Belum ada mission. Klik “Buat mission” untuk menambahkan.</div>:missions.map((mission)=><article className="mission-card" key={mission.id}><div className="mission-card-top"><span className={`tier tier-${mission.tierCode.toLowerCase()}`}>{mission.tierCode}</span><span className="live-dot">{mission.status}</span></div><h2>{mission.name}</h2><p>{mission.description||"Tanpa deskripsi"}</p><div className="mission-period">{mission.startDate} – {mission.endDate}</div><div className="mission-targets">{mission.targets.slice(0,2).map((target)=><div key={target.metric}><small>Target {target.metric}</small><strong>{numberFormat.format(target.targetValue)}</strong></div>)}<div><small>Peserta</small><strong>{mission.participantCount} KOL</strong></div></div><footer><button className="text-button" onClick={()=>{setEditingMission(mission);setShowMissionForm(true)}}>Edit mission</button></footer></article>)}</section>
+        {showMissionForm&&<div className="modal-backdrop" onMouseDown={()=>!missionSaving&&setShowMissionForm(false)}><form className="modal mission-modal" onMouseDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();void saveMission(event.currentTarget)}}><div className="modal-heading"><div><p className="eyebrow">MISSION BUILDER</p><h2>{editingMission?"Edit mission":"Buat mission baru"}</h2><p>Atur peserta, periode, dan indikator keberhasilan.</p></div><button type="button" onClick={()=>setShowMissionForm(false)}>×</button></div><label>Nama mission<input name="name" defaultValue={editingMission?.name??""} required/></label><div className="form-row"><label>Tier peserta<select name="tier" defaultValue={editingMission?.tierCode??"BARU"}><option>BARU</option><option>JELEK</option><option>BIASA</option><option>LUMAYAN</option><option>KUAT</option></select></label><label>Status<select name="status" defaultValue={editingMission?.status??"draft"}><option value="draft">Draft</option><option value="active">Aktif</option><option value="completed">Selesai</option><option value="cancelled">Dibatalkan</option></select></label></div><div className="form-row"><label>Tanggal mulai<input name="startDate" type="date" defaultValue={editingMission?.startDate??"2026-10-01"} required/></label><label>Tanggal selesai<input name="endDate" type="date" defaultValue={editingMission?.endDate??"2026-10-31"} required/></label></div><div className="target-builder"><div><label>Metrik<select name="metric" defaultValue={editingMission?.targets[0]?.metric??"nmat"}><option value="nmat">NMAT</option><option value="registered">Register</option><option value="active">Aktif</option><option value="transactions">Transaksi</option><option value="revenue">Revenue</option></select></label><label>Target<input name="target" type="number" min="0" defaultValue={editingMission?.targets[0]?.targetValue??50} required/></label></div></div><label>Deskripsi<input name="description" defaultValue={editingMission?.description??""} placeholder="Tujuan singkat mission"/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={()=>setShowMissionForm(false)}>Batal</button><button className="primary-button" disabled={missionSaving}>{missionSaving?"Menyimpan…":editingMission?"Simpan perubahan":"Buat mission"}</button></div></form></div>}
       </main>}
       {page === "master" && <main><Header title="Master KOL" subtitle="Kelola identitas KOL yang menjadi acuan query, tiering, mission, dan dashboard." />
         <section className="master-summary"><div><span>{kols.length}</span><p>Total KOL</p></div><div><span>{activeKolCount}</span><p>Aktif</p></div><div><span>{kols.length-activeKolCount}</span><p>Nonaktif</p></div><div><span>{tierCount}</span><p>Tier tersedia</p></div></section>
+        <section className="tier-overview"><button className={!tierFilter?"selected":""} onClick={()=>setTierFilter("")}><strong>{kols.length}</strong><span>Semua tier</span></button>{tierSummary.map((item)=><button key={item.tier} className={tierFilter===item.tier?"selected":""} onClick={()=>setTierFilter(item.tier)}><strong>{item.count}</strong><span>{item.tier}</span></button>)}</section>
         <section className="panel master-panel"><div className="master-toolbar"><div className="search"><span>⌕</span><input placeholder="Cari nama, upline, atau tier…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><div><button className="secondary-button" disabled={masterSaving} onClick={() => void syncGoogleMaster()}>{masterSaving ? "Menyinkronkan…" : "Sinkronkan Google Sheet"}</button><label className="import-button">Import CSV<input type="file" accept=".csv" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && void addFile("master", event.target.files[0])} /></label><button className="primary-button" onClick={() => { setEditingKol(null); setShowForm(true); }}>+ Tambah KOL</button></div></div>
           {masterError && <div className="api-message api-error"><strong>Gagal</strong><span>{masterError}</span></div>}
           {masterNotice && <div className="api-message api-success"><strong>Berhasil</strong><span>{masterNotice}</span></div>}
