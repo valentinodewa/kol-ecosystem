@@ -331,11 +331,11 @@ export function App() {
     <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
       <div className="brand"><span className="brand-mark">K</span><span><strong>KOL Operations</strong><small>Local workspace</small></span></div>
       <nav aria-label="Navigasi utama">{nav.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => choosePage(item.id)}><span>{item.code}</span>{item.label}{["queries", "history", "settings"].includes(item.id) ? <small>Segera</small> : null}</button>)}</nav>
-      <div className="sidebar-footer"><div className="avatar">OP</div><div><strong>{authApi.username() ?? "Administrator"}</strong><small>{authApi.username()?"Operator":"Local admin"}</small></div><button className="logout-button" onClick={()=>{authApi.logout();setAuthenticated(false)}}>Keluar</button></div>
+      <div className="sidebar-footer"><div className="avatar">{(authApi.username() ?? "AD").slice(0,2).toUpperCase()}</div><div><strong>{authApi.username() ?? "Administrator"}</strong><small>{authApi.role()==="admin"?"Super admin":authApi.role()==="operator"?"Operator":"Local admin"}</small></div><button className="logout-button" onClick={()=>{authApi.logout();setAuthenticated(false)}}>Keluar</button></div>
     </aside>
     <div className="workspace">
       <div className="mobile-bar"><button onClick={() => setMobileOpen((value) => !value)}>☰</button><strong>KOL Operations</strong><span /></div>
-      {page === "home" && <main><Header title="Selamat datang, Valentino." subtitle="Kelola data KOL dan pembaruan performa Fastpay dari satu tempat." />
+      {page === "home" && <main><Header title={`Selamat datang, ${authApi.username() ?? "Administrator"}.`} subtitle="Kelola data KOL dan pembaruan performa Fastpay dari satu tempat." />
         <section className="stats-grid">
           <article><span className="stat-code teal">KOL</span><p>Master KOL aktif</p><strong>72</strong><small>2 perlu dilengkapi</small></article>
           <article><span className="stat-code blue">PRD</span><p>Periode terakhir</p><strong>Sep 2026</strong><small>Data sudah lengkap</small></article>

@@ -33,7 +33,7 @@ export type DailyPerformanceRow = {
   syncedAt: string;
 };
 
-const remoteApi = import.meta.env.VITE_API_URL || "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
+const remoteApi = "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
 const tokenKey = "kol-auth-token-v2";
 
 function sessionToken() { return sessionStorage.getItem(tokenKey); }
