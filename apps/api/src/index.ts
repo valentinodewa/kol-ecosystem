@@ -51,10 +51,12 @@ app.use("/api/v1/auth/*", adminCors);
 app.use("/api/v1/operator/*", adminCors);
 app.use("/api/v1/admin/*", adminCors);
 app.use("/api/v1/admin/*", async (context, next) => {
+  const authorization = context.req.header("Authorization");
+  const session = await readSessionToken(authorization, context.env.ADMIN_API_KEY);
   const isAuthorized = await hasValidBearerToken(
-    context.req.header("Authorization"),
+    authorization,
     context.env.ADMIN_API_KEY,
-  );
+  ) || session?.role === "admin";
   if (!isAuthorized) {
     return context.json({ error: "unauthorized", message: "Kredensial admin tidak valid" }, 401);
   }
@@ -117,19 +119,19 @@ async function tokenSignature(payload: string, secret: string) {
   return bytesToBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, textEncoder.encode(payload))));
 }
 
-async function createOperatorToken(username: string, secret: string) {
-  const payload = bytesToBase64Url(textEncoder.encode(JSON.stringify({ sub: username, role: "operator", exp: Math.floor(Date.now() / 1000) + 43200 })));
+async function createSessionToken(username: string, role: "admin" | "operator", secret: string) {
+  const payload = bytesToBase64Url(textEncoder.encode(JSON.stringify({ sub: username, role, exp: Math.floor(Date.now() / 1000) + 43200 })));
   return `${payload}.${await tokenSignature(payload, secret)}`;
 }
 
-async function validOperatorToken(authorization: string | undefined, secret: string) {
-  if (!authorization?.startsWith("Bearer ")) return false;
+async function readSessionToken(authorization: string | undefined, secret: string) {
+  if (!authorization?.startsWith("Bearer ")) return null;
   const [payload, signature] = authorization.slice(7).split(".");
-  if (!payload || !signature || signature !== await tokenSignature(payload, secret)) return false;
+  if (!payload || !signature || signature !== await tokenSignature(payload, secret)) return null;
   try {
-    const claim = JSON.parse(new TextDecoder().decode(base64ToBytes(payload))) as { role?: string; exp?: number };
-    return claim.role === "operator" && typeof claim.exp === "number" && claim.exp > Date.now() / 1000;
-  } catch { return false; }
+    const claim = JSON.parse(new TextDecoder().decode(base64ToBytes(payload))) as { sub?: string; role?: "admin" | "operator"; exp?: number };
+    return claim.sub && (claim.role === "admin" || claim.role === "operator") && typeof claim.exp === "number" && claim.exp > Date.now() / 1000 ? claim : null;
+  } catch { return null; }
 }
 
 async function validPassword(password: string, salt: string, expectedHash: string, iterations: number) {
@@ -167,16 +169,16 @@ app.get("/api/v1/health", (context) => {
 app.post("/api/v1/auth/login", zValidator("json", loginRequestSchema), async (context) => {
   const input = context.req.valid("json");
   const user = await context.env.DB.prepare(
-    "SELECT username, password_salt, password_hash, password_iterations FROM operator_accounts WHERE username = ?1 COLLATE NOCASE AND role = 'operator' AND is_active = 1",
-  ).bind(input.username).first<{ username: string; password_salt: string; password_hash: string; password_iterations: number }>();
+    "SELECT username, password_salt, password_hash, password_iterations, role FROM operator_accounts WHERE username = ?1 COLLATE NOCASE AND is_active = 1",
+  ).bind(input.username).first<{ username: string; password_salt: string; password_hash: string; password_iterations: number; role: "admin" | "operator" }>();
   if (!user || !await validPassword(input.password, user.password_salt, user.password_hash, user.password_iterations)) {
     return context.json({ error: "unauthorized", message: "Username atau password salah" }, 401);
   }
-  return context.json({ token: await createOperatorToken(user.username, context.env.ADMIN_API_KEY), user: { username: user.username, role: "operator" }, expiresIn: 43200 });
+  return context.json({ token: await createSessionToken(user.username, user.role, context.env.ADMIN_API_KEY), user: { username: user.username, role: user.role }, expiresIn: 43200 });
 });
 
 app.use("/api/v1/operator/*", async (context, next) => {
-  if (!await validOperatorToken(context.req.header("Authorization"), context.env.ADMIN_API_KEY)) {
+  if (!await readSessionToken(context.req.header("Authorization"), context.env.ADMIN_API_KEY)) {
     return context.json({ error: "unauthorized", message: "Sesi operator tidak valid atau sudah berakhir" }, 401);
   }
   return next();
