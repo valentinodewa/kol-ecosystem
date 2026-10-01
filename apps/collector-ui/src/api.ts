@@ -46,7 +46,7 @@ async function request<T>(path: string, init?: RequestInit, adminOnly = false): 
   const endpoint = token ? `${remoteApi}/api/v1/${adminOnly ? "admin" : "operator"}${path}` : `/local-api${path}`;
   const response = await fetch(endpoint, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(token && !adminOnly ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
   });
   const contentType = response.headers.get("content-type") ?? "";
   const body = contentType.includes("application/json") ? await response.json().catch(() => null) as { message?: string } | null : null;
