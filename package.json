@@ -10,6 +10,7 @@
     "dev": "pnpm --parallel --filter @kol/dashboard --filter @kol/api dev",
     "dev:dashboard": "pnpm --filter @kol/dashboard dev",
     "dev:api": "pnpm --filter @kol/api dev",
+    "dev:collector-ui": "pnpm --filter @kol/collector-ui dev",
     "collect": "pnpm --filter @kol/collector collect",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
