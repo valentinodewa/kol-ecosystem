@@ -1,0 +1,7 @@
+import type { KolPerformanceSummary } from "@kol/contracts";
+import { formatIdr, formatNumber } from "../utils/format";
+export function PerformanceTable({ items, loading }: { items: KolPerformanceSummary[]; loading: boolean }) {
+  if (loading) return <div className="table-state" role="status"><span className="loader" />Menyiapkan data performa…</div>;
+  if (!items.length) return <div className="table-state"><strong>Belum ada data pada periode ini.</strong><span>Jalankan collector, lalu tekan Refresh.</span></div>;
+  return <div className="table-wrap"><table><thead><tr><th>Peringkat</th><th>KOL / Upline</th><th className="numeric">Register</th><th className="numeric">Aktif</th><th className="numeric">NMAT</th><th className="numeric">Transaksi</th><th className="numeric">Revenue</th></tr></thead><tbody>{items.map((item, index) => <tr key={item.uplineId}><td><span className={`rank rank-${Math.min(index + 1, 4)}`}>{index + 1}</span></td><td><div className="kol-identity"><strong>{item.kolName}</strong><span>{item.uplineId}</span></div></td><td className="numeric">{formatNumber(item.totalRegistered)}</td><td className="numeric">{formatNumber(item.totalActive)}</td><td className="numeric highlight-number">{formatNumber(item.totalNmat)}</td><td className="numeric">{formatNumber(item.totalAchieveTrx)}</td><td className="numeric revenue-cell">{formatIdr(item.totalAchieveRev)}</td></tr>)}</tbody></table></div>;
+}
