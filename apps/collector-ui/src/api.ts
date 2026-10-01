@@ -5,6 +5,8 @@ export type KolRecord = {
   status: "active" | "inactive";
   tierCode: string | null;
   picName: string | null;
+  contact?: string | null;
+  notes?: string | null;
 };
 
 export type KolInput = {
@@ -13,12 +15,35 @@ export type KolInput = {
   status: "active" | "inactive";
   tierCode: string | null;
   picName: string | null;
+  contact?: string | null;
+  notes?: string | null;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/local-api${path}`, {
+export type DailyPerformanceRow = {
+  performanceDate: string;
+  uplineId: string;
+  kolName: string;
+  totalRegistered: number;
+  totalActive: number;
+  totalNmat: number;
+  totalAchieveTrx: number;
+  totalAchieveRev: number;
+  totalActivationCommission: number;
+  totalActivationRevenue: number;
+  syncedAt: string;
+};
+
+const remoteApi = import.meta.env.VITE_API_URL ?? "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
+const tokenKey = "kol-operator-token";
+
+function sessionToken() { return sessionStorage.getItem(tokenKey); }
+
+async function request<T>(path: string, init?: RequestInit, adminOnly = false): Promise<T> {
+  const token = sessionToken();
+  const endpoint = token && !adminOnly ? `${remoteApi}/api/v1/operator${path}` : `/local-api${path}`;
+  const response = await fetch(endpoint, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...(token && !adminOnly ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
   });
   const body = await response.json().catch(() => null) as { message?: string } | null;
   if (!response.ok) {
@@ -29,7 +54,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const kolApi = {
   list: () => request<{ items: KolRecord[] }>("/kols"),
-  create: (input: KolInput) => request<KolRecord>("/kols", { method: "POST", body: JSON.stringify(input) }),
-  update: (id: number, input: KolInput) => request<KolRecord>(`/kols/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
-  import: (rows: KolInput[]) => request<{ status: string; processedKols: number }>("/kols/import", { method: "POST", body: JSON.stringify({ rows }) }),
+  create: (input: KolInput) => request<KolRecord>("/kols", { method: "POST", body: JSON.stringify(input) }, true),
+  update: (id: number, input: KolInput) => request<KolRecord>(`/kols/${id}`, { method: "PATCH", body: JSON.stringify(input) }, true),
+  import: (rows: KolInput[]) => request<{ status: string; processedKols: number }>("/kols/import", { method: "POST", body: JSON.stringify({ rows }) }, true),
+};
+
+export const performanceApi = {
+  daily: (periodStart: string, periodEnd: string, uplineId?: string) => {
+    const params = new URLSearchParams({ periodStart, periodEnd });
+    if (uplineId) params.set("uplineId", uplineId);
+    return request<{ periodStart: string; periodEnd: string; uplineId: string | null; items: DailyPerformanceRow[] }>(`/performance/daily?${params}`);
+  },
+  import: (payload: unknown) => request<{ status: string; syncRunId: string; processedRows: number }>("/performance/import", { method: "POST", body: JSON.stringify(payload) }),
+};
+
+export const authApi = {
+  hasSession: () => Boolean(sessionToken()),
+  login: async (username: string, password: string) => {
+    const response = await fetch(`${remoteApi}/api/v1/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+    const body = await response.json() as { token?: string; user?: { username: string; role: string }; message?: string };
+    if (!response.ok || !body.token || !body.user) throw new Error(body.message ?? "Login gagal");
+    sessionStorage.setItem(tokenKey, body.token); sessionStorage.setItem("kol-operator-user", body.user.username); return body.user;
+  },
+  logout: () => { sessionStorage.removeItem(tokenKey); sessionStorage.removeItem("kol-operator-user"); },
+  username: () => sessionStorage.getItem("kol-operator-user"),
 };

@@ -18,6 +18,11 @@ export default defineConfig(({ mode }) => {
             ? { Authorization: `Bearer ${env.ADMIN_API_KEY}` }
             : undefined,
         },
+        "/google-master.csv": {
+          target: "https://docs.google.com",
+          changeOrigin: true,
+          rewrite: () => "/spreadsheets/d/1ceau9G_gDVZ7HGOcieTqAdxKprSXfNe2R1AzxsMXupI/export?format=csv&gid=612187701",
+        },
       },
     },
   };

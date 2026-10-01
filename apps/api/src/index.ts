@@ -5,6 +5,8 @@ import { timingSafeEqual } from "node:crypto";
 import {
   healthResponseSchema,
   dailyPerformanceIngestionRequestSchema,
+  completeDailyPerformanceImportRequestSchema,
+  loginRequestSchema,
   dailyPerformanceListResponseSchema,
   dailyPerformanceQuerySchema,
   kolCreateRequestSchema,
@@ -25,6 +27,7 @@ import {
 } from "@kol/contracts";
 
 const app = new Hono<{ Bindings: Env }>();
+const operationsOrigins = ["http://localhost:4174", "http://127.0.0.1:4174", "https://kol-ecosystem-dashboard-staging.pages.dev"];
 
 const publicReadCors = cors({
   origin: "*",
@@ -38,12 +41,14 @@ app.use("/api/v1/db/health", publicReadCors);
 app.use("/api/v1/performance", publicReadCors);
 
 const adminCors = cors({
-  origin: (origin) => ["http://localhost:4174", "http://127.0.0.1:4174"].includes(origin) ? origin : "",
+  origin: (origin) => operationsOrigins.includes(origin) ? origin : "",
   allowMethods: ["GET", "POST", "PUT", "PATCH", "OPTIONS"],
   allowHeaders: ["Accept", "Authorization", "Content-Type"],
   maxAge: 86400,
 });
 
+app.use("/api/v1/auth/*", adminCors);
+app.use("/api/v1/operator/*", adminCors);
 app.use("/api/v1/admin/*", adminCors);
 app.use("/api/v1/admin/*", async (context, next) => {
   const isAuthorized = await hasValidBearerToken(
@@ -97,6 +102,43 @@ function mapKol(row: KolRow) {
 
 const textEncoder = new TextEncoder();
 
+function bytesToBase64Url(bytes: Uint8Array) {
+  let binary = ""; for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value.replaceAll("-", "+").replaceAll("_", "/"));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function tokenSignature(payload: string, secret: string) {
+  const key = await crypto.subtle.importKey("raw", textEncoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return bytesToBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, textEncoder.encode(payload))));
+}
+
+async function createOperatorToken(username: string, secret: string) {
+  const payload = bytesToBase64Url(textEncoder.encode(JSON.stringify({ sub: username, role: "operator", exp: Math.floor(Date.now() / 1000) + 43200 })));
+  return `${payload}.${await tokenSignature(payload, secret)}`;
+}
+
+async function validOperatorToken(authorization: string | undefined, secret: string) {
+  if (!authorization?.startsWith("Bearer ")) return false;
+  const [payload, signature] = authorization.slice(7).split(".");
+  if (!payload || !signature || signature !== await tokenSignature(payload, secret)) return false;
+  try {
+    const claim = JSON.parse(new TextDecoder().decode(base64ToBytes(payload))) as { role?: string; exp?: number };
+    return claim.role === "operator" && typeof claim.exp === "number" && claim.exp > Date.now() / 1000;
+  } catch { return false; }
+}
+
+async function validPassword(password: string, salt: string, expectedHash: string, iterations: number) {
+  const key = await crypto.subtle.importKey("raw", textEncoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const actual = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: base64ToBytes(salt), iterations }, key, 256));
+  const expected = base64ToBytes(expectedHash);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
 async function hasValidBearerToken(authorization: string | undefined, expectedToken: string) {
   if (!authorization?.startsWith("Bearer ")) {
     return false;
@@ -120,6 +162,24 @@ app.get("/api/v1/health", (context) => {
   });
 
   return context.json(payload);
+});
+
+app.post("/api/v1/auth/login", zValidator("json", loginRequestSchema), async (context) => {
+  const input = context.req.valid("json");
+  const user = await context.env.DB.prepare(
+    "SELECT username, password_salt, password_hash, password_iterations FROM operator_accounts WHERE username = ?1 COLLATE NOCASE AND role = 'operator' AND is_active = 1",
+  ).bind(input.username).first<{ username: string; password_salt: string; password_hash: string; password_iterations: number }>();
+  if (!user || !await validPassword(input.password, user.password_salt, user.password_hash, user.password_iterations)) {
+    return context.json({ error: "unauthorized", message: "Username atau password salah" }, 401);
+  }
+  return context.json({ token: await createOperatorToken(user.username, context.env.ADMIN_API_KEY), user: { username: user.username, role: "operator" }, expiresIn: 43200 });
+});
+
+app.use("/api/v1/operator/*", async (context, next) => {
+  if (!await validOperatorToken(context.req.header("Authorization"), context.env.ADMIN_API_KEY)) {
+    return context.json({ error: "unauthorized", message: "Sesi operator tidak valid atau sudah berakhir" }, 401);
+  }
+  return next();
 });
 
 app.get("/api/v1/db/health", async (context) => {
@@ -347,11 +407,74 @@ app.get("/api/v1/admin/performance/daily", zValidator("query", dailyPerformanceQ
   if (query.uplineId) { conditions.push("k.upline_id = ?3"); bindings.push(query.uplineId); }
   const result = await context.env.DB.prepare(
     `SELECT d.performance_date, k.upline_id, k.name AS kol_name, d.total_registered, d.total_active,
-      d.total_nmat, d.total_achieve_trx, d.total_achieve_rev, d.synced_at
+      d.total_nmat, d.total_achieve_trx, d.total_achieve_rev, d.total_activation_commission,
+      d.total_activation_revenue, d.synced_at
      FROM kol_daily_performance d INNER JOIN kols k ON k.id = d.kol_id
      WHERE ${conditions.join(" AND ")} ORDER BY d.performance_date ASC, d.total_nmat DESC, k.upline_id ASC`,
-  ).bind(...bindings).all<{ performance_date: string; upline_id: string; kol_name: string; total_registered: number; total_active: number; total_nmat: number; total_achieve_trx: number; total_achieve_rev: number; synced_at: string }>();
-  return context.json(dailyPerformanceListResponseSchema.parse({ periodStart: query.periodStart, periodEnd: query.periodEnd, uplineId: query.uplineId ?? null, items: result.results.map((row) => ({ performanceDate: row.performance_date, uplineId: row.upline_id, kolName: row.kol_name, totalRegistered: row.total_registered, totalActive: row.total_active, totalNmat: row.total_nmat, totalAchieveTrx: row.total_achieve_trx, totalAchieveRev: row.total_achieve_rev, syncedAt: row.synced_at })) }));
+  ).bind(...bindings).all<{ performance_date: string; upline_id: string; kol_name: string; total_registered: number; total_active: number; total_nmat: number; total_achieve_trx: number; total_achieve_rev: number; total_activation_commission: number; total_activation_revenue: number; synced_at: string }>();
+  return context.json(dailyPerformanceListResponseSchema.parse({ periodStart: query.periodStart, periodEnd: query.periodEnd, uplineId: query.uplineId ?? null, items: result.results.map((row) => ({ performanceDate: row.performance_date, uplineId: row.upline_id, kolName: row.kol_name, totalRegistered: row.total_registered, totalActive: row.total_active, totalNmat: row.total_nmat, totalAchieveTrx: row.total_achieve_trx, totalAchieveRev: row.total_achieve_rev, totalActivationCommission: row.total_activation_commission, totalActivationRevenue: row.total_activation_revenue, syncedAt: row.synced_at })) }));
+});
+
+app.get("/api/v1/operator/kols", async (context) => {
+  const result = await context.env.DB.prepare(
+    `SELECT id, upline_id, name, status, tier_code, joined_at, contact, pic_name, notes, created_at, updated_at
+     FROM kols ORDER BY status ASC, name COLLATE NOCASE ASC`,
+  ).all<KolRow>();
+  return context.json(kolListResponseSchema.parse({ items: result.results.map(mapKol) }));
+});
+
+app.get("/api/v1/operator/performance/daily", zValidator("query", dailyPerformanceQuerySchema), async (context) => {
+  const query = context.req.valid("query");
+  const conditions = ["d.performance_date BETWEEN ?1 AND ?2"];
+  const bindings: unknown[] = [query.periodStart, query.periodEnd];
+  if (query.uplineId) { conditions.push("k.upline_id = ?3"); bindings.push(query.uplineId); }
+  const result = await context.env.DB.prepare(
+    `SELECT d.performance_date, k.upline_id, k.name AS kol_name, d.total_registered, d.total_active,
+      d.total_nmat, d.total_achieve_trx, d.total_achieve_rev, d.total_activation_commission,
+      d.total_activation_revenue, d.synced_at
+     FROM kol_daily_performance d INNER JOIN kols k ON k.id = d.kol_id
+     WHERE ${conditions.join(" AND ")} ORDER BY d.performance_date ASC, d.total_nmat DESC, k.upline_id ASC`,
+  ).bind(...bindings).all<{ performance_date: string; upline_id: string; kol_name: string; total_registered: number; total_active: number; total_nmat: number; total_achieve_trx: number; total_achieve_rev: number; total_activation_commission: number; total_activation_revenue: number; synced_at: string }>();
+  return context.json(dailyPerformanceListResponseSchema.parse({ periodStart: query.periodStart, periodEnd: query.periodEnd, uplineId: query.uplineId ?? null, items: result.results.map((row) => ({ performanceDate: row.performance_date, uplineId: row.upline_id, kolName: row.kol_name, totalRegistered: row.total_registered, totalActive: row.total_active, totalNmat: row.total_nmat, totalAchieveTrx: row.total_achieve_trx, totalAchieveRev: row.total_achieve_rev, totalActivationCommission: row.total_activation_commission, totalActivationRevenue: row.total_activation_revenue, syncedAt: row.synced_at })) }));
+});
+
+app.post("/api/v1/operator/performance/import", zValidator("json", completeDailyPerformanceImportRequestSchema), async (context) => {
+  const payload = context.req.valid("json"); const now = new Date().toISOString();
+  await context.env.DB.prepare(
+    `INSERT INTO sync_runs (id, period_start, period_end, status, source, query_version, kol_count, row_count, started_at)
+     VALUES (?1, ?2, ?3, 'running', 'operator_workbook_upload', 'web-xlsx-v1', ?4, ?5, ?6)`,
+  ).bind(payload.syncRunId, payload.periodStart, payload.periodEnd, new Set(payload.rows.map((row) => row.uplineId)).size, payload.rows.length, payload.extractedAt).run();
+  try {
+    const statements: D1PreparedStatement[] = [];
+    for (const row of payload.rows) {
+      statements.push(
+        context.env.DB.prepare(`INSERT INTO kols (upline_id, name, status, updated_at) VALUES (?1, ?1, 'active', ?2)
+          ON CONFLICT(upline_id) DO UPDATE SET updated_at = excluded.updated_at`).bind(row.uplineId, now),
+        context.env.DB.prepare(`INSERT INTO kol_daily_performance
+          (kol_id, performance_date, sync_run_id, total_registered, total_active, total_nmat, total_achieve_trx,
+           total_achieve_rev, total_activation_commission, total_activation_revenue, synced_at)
+          SELECT id, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 FROM kols WHERE upline_id = ?11
+          ON CONFLICT(kol_id, performance_date) DO UPDATE SET sync_run_id=excluded.sync_run_id,
+           total_registered=excluded.total_registered, total_active=excluded.total_active, total_nmat=excluded.total_nmat,
+           total_achieve_trx=excluded.total_achieve_trx, total_achieve_rev=excluded.total_achieve_rev,
+           total_activation_commission=excluded.total_activation_commission,
+           total_activation_revenue=excluded.total_activation_revenue, synced_at=excluded.synced_at, updated_at=excluded.synced_at`
+        ).bind(row.performanceDate, payload.syncRunId, row.totalRegistered, row.totalActive, row.totalNmat,
+          row.totalAchieveTrx, row.totalAchieveRev, row.totalActivationCommission, row.totalActivationRevenue,
+          payload.extractedAt, row.uplineId),
+      );
+      if (statements.length >= 80) await context.env.DB.batch(statements.splice(0));
+    }
+    if (statements.length) await context.env.DB.batch(statements);
+    await context.env.DB.batch([
+      context.env.DB.prepare("UPDATE sync_runs SET status='succeeded', completed_at=?1 WHERE id=?2").bind(now, payload.syncRunId),
+      context.env.DB.prepare("INSERT INTO audit_logs (actor, action, entity_type, entity_id, after_json) VALUES ('operator', 'import', 'daily_performance', ?1, ?2)").bind(payload.syncRunId, JSON.stringify({ rows: payload.rows.length, periodStart: payload.periodStart, periodEnd: payload.periodEnd })),
+    ]);
+    return context.json({ status: "accepted", syncRunId: payload.syncRunId, processedRows: payload.rows.length }, 202);
+  } catch (error) {
+    await context.env.DB.prepare("UPDATE sync_runs SET status='failed', completed_at=?1, error_message=?2 WHERE id=?3").bind(now, error instanceof Error ? error.message : "Import gagal", payload.syncRunId).run();
+    throw error;
+  }
 });
 
 app.post(

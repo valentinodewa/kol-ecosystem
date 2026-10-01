@@ -189,6 +189,8 @@ export const dailyPerformanceRowSchema = z.object({
   totalNmat: z.number().int().nonnegative(),
   totalAchieveTrx: z.number().int().nonnegative(),
   totalAchieveRev: z.number(),
+  totalActivationCommission: z.number(),
+  totalActivationRevenue: z.number(),
   syncedAt: z.iso.datetime(),
 });
 
@@ -199,7 +201,26 @@ export const dailyPerformanceListResponseSchema = z.object({
   items: z.array(dailyPerformanceRowSchema),
 });
 
-export const dailyPerformanceIngestionRowSchema = dailyPerformanceRowSchema.omit({ kolName: true, syncedAt: true });
+export const dailyPerformanceIngestionRowSchema = dailyPerformanceRowSchema.omit({ kolName: true, syncedAt: true, totalActivationCommission: true, totalActivationRevenue: true });
+export const completeDailyPerformanceRowSchema = dailyPerformanceRowSchema.omit({ kolName: true, syncedAt: true });
+export const completeDailyPerformanceImportRequestSchema = z.object({
+  syncRunId: z.uuid(),
+  periodStart: isoDateSchema,
+  periodEnd: isoDateSchema,
+  extractedAt: z.iso.datetime(),
+  rows: z.array(completeDailyPerformanceRowSchema).min(1).max(750),
+}).refine((value) => value.periodEnd >= value.periodStart, {
+  message: "periodEnd tidak boleh lebih awal dari periodStart", path: ["periodEnd"],
+}).refine((value) => value.rows.every((row) => row.performanceDate >= value.periodStart && row.performanceDate <= value.periodEnd), {
+  message: "Semua tanggal harus berada di dalam periode", path: ["rows"],
+}).refine((value) => new Set(value.rows.map((row) => `${row.performanceDate}:${row.uplineId}`)).size === value.rows.length, {
+  message: "Kombinasi tanggal dan upline tidak boleh duplikat", path: ["rows"],
+});
+
+export const loginRequestSchema = z.object({
+  username: z.string().trim().min(1).max(80),
+  password: z.string().min(1).max(200),
+});
 export const dailyPerformanceIngestionRequestSchema = z.object({
   syncRunId: z.uuid(),
   periodStart: isoDateSchema,
