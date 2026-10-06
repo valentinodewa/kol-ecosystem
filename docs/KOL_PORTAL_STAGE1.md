@@ -8,7 +8,7 @@ Stage 1 adds the minimum authentication and authorization foundation for a futur
 - API environment: `koldev`
 - Worker: `kol-ecosystem-api-kol-dev`
 - D1: `kol-ecosystem-kol-dev`
-- Pages branch: `feature/kol-portal`
+- Dedicated Pages project: `kol-ecosystem-kol-portal-dev`
 - Production/staging Worker, D1, and the main Pages deployment are not migration or deployment targets for this stage.
 
 ## Data model
@@ -46,7 +46,7 @@ When the logged-in role is `kol`, the feature Pages build renders a small KOL-on
 - Admin can still read all internal KOL records in the development copy.
 - Logout revokes the KOL session; the same token receives `401` afterward.
 - Production Pages bundle points to the staging API only.
-- Feature Pages bundle points to the koldev API only.
+- Dedicated KOL Pages bundle points to the koldev API only.
 
 ## Next stage
 

@@ -33,6 +33,7 @@ const operationsOrigins = [
   "http://127.0.0.1:4174",
   "https://kol-ecosystem-dashboard-staging.pages.dev",
   "https://feature-kol-portal.kol-ecosystem-dashboard-staging.pages.dev",
+  "https://kol-ecosystem-kol-portal-dev.pages.dev",
 ];
 
 const publicReadCors = cors({

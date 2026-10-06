@@ -7,7 +7,7 @@ Stage 2 adds the first read-only KOL experience on top of the isolated Stage 1 a
 - Git branch: `feature/kol-portal`
 - Worker environment: `koldev`
 - D1 database: `kol-ecosystem-kol-dev`
-- Pages branch: `feature/kol-portal`
+- Dedicated Pages project: `kol-ecosystem-kol-portal-dev`
 - The main Pages deployment, staging Worker, and staging D1 are not deployment targets.
 
 ## Features
@@ -47,7 +47,7 @@ Neither endpoint accepts an arbitrary KOL ID or tier.
 - Temporary tier and mission status changes were restored after testing.
 - KOL tokens remain rejected by operator and admin endpoints.
 - Admin tokens remain rejected by KOL endpoints.
-- Production Pages still contains only the staging API URL; feature Pages contains only the koldev API URL.
+- Production Pages still contains only the staging API URL; the dedicated KOL Pages project contains only the koldev API URL.
 
 ## Current development data note
 

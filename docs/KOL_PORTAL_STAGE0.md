@@ -17,7 +17,7 @@ The staging database was exported read-only before the KOL portal environment wa
 ## Isolated KOL development environment
 
 - Git branch: `feature/kol-portal`
-- Pages preview URL: `https://feature-kol-portal.kol-ecosystem-dashboard-staging.pages.dev/`
+- Dedicated KOL preview URL: `https://kol-ecosystem-kol-portal-dev.pages.dev/`
 - API environment: `koldev`
 - API Worker: `kol-ecosystem-api-kol-dev`
 - API URL: `https://kol-ecosystem-api-kol-dev.inovalentino99tele.workers.dev`
@@ -30,7 +30,7 @@ The development D1 database was populated from the read-only staging export. It 
 
 1. Never run KOL portal migrations with `--env staging`.
 2. All KOL portal Worker commands must use `--env koldev` until an explicit production rollout is approved.
-3. All KOL portal Pages deployments must use `--branch feature/kol-portal`.
+3. All KOL portal deployments must target the dedicated Pages project `kol-ecosystem-kol-portal-dev`.
 4. The preview frontend must be built with:
 
    ```text
