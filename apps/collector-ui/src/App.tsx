@@ -58,6 +58,11 @@ function parseCsvLine(line: string) {
   values.push(value.trim()); return values;
 }
 
+function csvValue(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 async function parseMasterCsv(file: File): Promise<KolInput[]> {
   const lines = (await file.text()).replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
   const headers = parseCsvLine(lines[0] ?? "").map((header) => header.toLowerCase());
@@ -330,6 +335,19 @@ export function App() {
     finally { setMasterSaving(false); }
   }
 
+  async function exportMasterKol() {
+    setMasterSaving(true); setMasterError(null); setMasterNotice(null);
+    try {
+      const { items } = await kolApi.list();
+      const header = ["upline_id", "name", "tier_code", "pic_name", "status"];
+      const rows = items.map((item) => [item.uplineId, item.name, item.tierCode, item.picName, item.status].map(csvValue).join(","));
+      const url = URL.createObjectURL(new Blob(["\uFEFF", [header.join(","), ...rows].join("\r\n")], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a"); anchor.href = url; anchor.download = `master-kol-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
+      setMasterNotice(`${items.length} KOL terbaru dari D1 berhasil diekspor.`);
+    } catch (error) { setMasterError(error instanceof Error ? error.message : "Export Master KOL gagal"); }
+    finally { setMasterSaving(false); }
+  }
+
   async function saveMission(form: HTMLFormElement) {
     const data = new FormData(form); const metric = String(data.get("metric")) as MissionInput["targets"][number]["metric"];
     const input: MissionInput = { name:String(data.get("name")).trim(), description:String(data.get("description")).trim()||null, tierCode:String(data.get("tier")), startDate:String(data.get("startDate")), endDate:String(data.get("endDate")), rewardDescription:null, status:String(data.get("status")) as MissionInput["status"], participantTarget:Number(data.get("participantTarget")), budgetAmount:Number(data.get("budgetAmount")), targets:[{metric,targetValue:Number(data.get("target"))}] };
@@ -392,7 +410,7 @@ export function App() {
       {page === "master" && <main><Header title="Master KOL" subtitle="Kelola identitas KOL yang menjadi acuan query, tiering, mission, dan dashboard." />
         <section className="master-summary"><div><span>{kols.length}</span><p>Total KOL</p></div><div><span>{activeKolCount}</span><p>Aktif</p></div><div><span>{kols.length-activeKolCount}</span><p>Nonaktif</p></div><div><span>{tierCount}</span><p>Tier tersedia</p></div></section>
         <section className="tier-overview"><button className={!tierFilter?"selected":""} onClick={()=>setTierFilter("")}><strong>{kols.length}</strong><span>Semua tier</span></button>{tierSummary.map((item)=><button key={item.tier} className={tierFilter===item.tier?"selected":""} onClick={()=>setTierFilter(item.tier)}><strong>{item.count}</strong><span>{item.tier}</span></button>)}</section>
-        <section className="panel master-panel"><div className="master-toolbar"><div className="search"><span>⌕</span><input placeholder="Cari nama, upline, atau tier…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><div><button className="secondary-button" disabled={masterSaving} onClick={() => void syncGoogleMaster()}>{masterSaving ? "Menyinkronkan…" : "Sinkronkan Google Sheet"}</button><label className="import-button">Import CSV<input type="file" accept=".csv" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && void addFile("master", event.target.files[0])} /></label><button className="primary-button" onClick={() => { setEditingKol(null); setShowForm(true); }}>+ Tambah KOL</button></div></div>
+        <section className="panel master-panel"><div className="master-toolbar"><div className="search"><span>⌕</span><input placeholder="Cari nama, upline, atau tier…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><div><button className="secondary-button" disabled={masterSaving} onClick={() => void syncGoogleMaster()}>{masterSaving ? "Memproses…" : "Import Google Sheet"}</button><button className="secondary-button" disabled={masterSaving} onClick={() => void exportMasterKol()}>Export CSV</button><label className="import-button">Import CSV<input type="file" accept=".csv" hidden onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && void addFile("master", event.target.files[0])} /></label><button className="primary-button" onClick={() => { setEditingKol(null); setShowForm(true); }}>+ Tambah KOL</button></div></div>
           {masterError && <div className="api-message api-error"><strong>Gagal</strong><span>{masterError}</span></div>}
           {masterNotice && <div className="api-message api-success"><strong>Berhasil</strong><span>{masterNotice}</span></div>}
           {files.master && <div className="import-preview"><span>CSV lolos validasi</span><strong>{files.master.name}</strong><small>{masterImportRows.length} baris · upsert berdasarkan upline_id</small><button className="text-button" disabled={masterSaving} onClick={() => void importMasterKols()}>{masterSaving ? "Mengimpor…" : "Import ke database"}</button></div>}
