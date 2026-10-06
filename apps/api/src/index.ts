@@ -169,7 +169,11 @@ async function readActiveKolSession(authorization: string | undefined, env: Env)
        AND datetime(s.expires_at) > datetime('now') AND a.is_active = 1 AND k.status = 'active'
        AND a.kol_id = ?3 AND k.upline_id = ?4`,
   ).bind(claim.sid, await sha256Base64Url(token), claim.kolId, claim.uplineId).first<{ id: string }>();
-  return session ? claim : null;
+  if (!session) return null;
+  const operationalKol = await env.OPERATIONS_DB.prepare(
+    "SELECT id FROM kols WHERE upline_id = ?1 AND status = 'active'",
+  ).bind(claim.uplineId).first<{ id: number }>();
+  return operationalKol ? claim : null;
 }
 
 async function validPassword(password: string, salt: string, expectedHash: string, iterations: number) {
@@ -240,6 +244,10 @@ app.post("/api/v1/auth/login", zValidator("json", loginRequestSchema), async (co
   if (!kolAccount || !await validPassword(input.password, kolAccount.password_salt, kolAccount.password_hash, kolAccount.password_iterations)) {
     return context.json({ error: "unauthorized", message: "Username atau password salah" }, 401);
   }
+  const operationalKol = await context.env.OPERATIONS_DB.prepare(
+    "SELECT name, tier_code FROM kols WHERE upline_id = ?1 AND status = 'active'",
+  ).bind(kolAccount.upline_id).first<{ name: string; tier_code: string | null }>();
+  if (!operationalKol) return context.json({ error: "inactive_kol", message: "Kerja sama KOL tidak aktif" }, 403);
   const sessionId = crypto.randomUUID();
   const token = await createSessionToken({ sub: kolAccount.username, role: "kol", sid: sessionId, kolId: kolAccount.kol_id, uplineId: kolAccount.upline_id }, context.env.ADMIN_API_KEY);
   const expiresAt = new Date(Date.now() + 43200 * 1000).toISOString();
@@ -247,7 +255,7 @@ app.post("/api/v1/auth/login", zValidator("json", loginRequestSchema), async (co
     context.env.DB.prepare("INSERT INTO kol_sessions (id, account_id, token_hash, expires_at) VALUES (?1, ?2, ?3, ?4)").bind(sessionId, kolAccount.account_id, await sha256Base64Url(token), expiresAt),
     context.env.DB.prepare("UPDATE kol_accounts SET last_login_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1").bind(kolAccount.account_id),
   ]);
-  return context.json({ token, user: { username: kolAccount.username, role: "kol", uplineId: kolAccount.upline_id, name: kolAccount.name, tierCode: kolAccount.tier_code, mustChangePassword: kolAccount.must_change_password === 1 }, expiresIn: 43200 });
+  return context.json({ token, user: { username: kolAccount.username, role: "kol", uplineId: kolAccount.upline_id, name: operationalKol.name, tierCode: operationalKol.tier_code, mustChangePassword: kolAccount.must_change_password === 1 }, expiresIn: 43200 });
 });
 
 app.post("/api/v1/auth/logout", async (context) => {
@@ -276,14 +284,15 @@ app.use("/api/v1/kol/*", async (context, next) => {
 app.get("/api/v1/kol/profile", async (context) => {
   const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
   if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
-  const profile = await context.env.DB.prepare(
-    `SELECT k.upline_id, k.name, k.tier_code, k.status, k.joined_at, k.pic_name,
-            a.must_change_password
-     FROM kols k INNER JOIN kol_accounts a ON a.kol_id = k.id
-     WHERE k.id = ?1 AND k.upline_id = ?2 AND a.username = ?3 COLLATE NOCASE`,
-  ).bind(session.kolId, session.uplineId, session.sub).first<{ upline_id: string; name: string; tier_code: string | null; status: string; joined_at: string | null; pic_name: string | null; must_change_password: number }>();
+  const profile = await context.env.OPERATIONS_DB.prepare(
+    `SELECT upline_id, name, tier_code, status, joined_at, pic_name
+     FROM kols WHERE upline_id = ?1`,
+  ).bind(session.uplineId).first<{ upline_id: string; name: string; tier_code: string | null; status: string; joined_at: string | null; pic_name: string | null }>();
   if (!profile) return context.json({ error: "not_found", message: "Profil KOL tidak ditemukan" }, 404);
-  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status, joinedAt: profile.joined_at, picName: profile.pic_name, mustChangePassword: profile.must_change_password === 1 });
+  const account = await context.env.DB.prepare(
+    "SELECT must_change_password FROM kol_accounts WHERE id = (SELECT account_id FROM kol_sessions WHERE id = ?1)",
+  ).bind(session.sid).first<{ must_change_password: number }>();
+  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status, joinedAt: profile.joined_at, picName: profile.pic_name, mustChangePassword: account?.must_change_password === 1 });
 });
 
 app.post("/api/v1/kol/change-password", zValidator("json", kolPasswordChangeRequestSchema), async (context) => {
@@ -316,19 +325,19 @@ app.get("/api/v1/kol/missions", async (context) => {
   if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
 
   // Tier selalu dibaca dari master KOL terbaru. Tier tidak pernah dipercaya dari token atau query browser.
-  const kol = await context.env.DB.prepare(
-    "SELECT tier_code FROM kols WHERE id = ?1 AND upline_id = ?2 AND status = 'active'",
-  ).bind(session.kolId, session.uplineId).first<{ tier_code: string | null }>();
+  const kol = await context.env.OPERATIONS_DB.prepare(
+    "SELECT tier_code FROM kols WHERE upline_id = ?1 AND status = 'active'",
+  ).bind(session.uplineId).first<{ tier_code: string | null }>();
   if (!kol) return context.json({ error: "not_found", message: "Profil KOL tidak ditemukan" }, 404);
   if (!kol.tier_code) return context.json({ tierCode: null, items: [] });
 
-  const missions = await context.env.DB.prepare(
+  const missions = await context.env.OPERATIONS_DB.prepare(
     `SELECT id, name, description, tier_code, start_date, end_date, reward_description, status
      FROM missions
      WHERE status = 'active' AND UPPER(tier_code) = UPPER(?1)
      ORDER BY start_date ASC, created_at ASC`,
   ).bind(kol.tier_code).all<{ id: string; name: string; description: string | null; tier_code: string; start_date: string; end_date: string; reward_description: string | null; status: "active" }>();
-  const targets = await context.env.DB.prepare(
+  const targets = await context.env.OPERATIONS_DB.prepare(
     `SELECT mt.mission_id, mt.metric, mt.target_value
      FROM mission_targets mt INNER JOIN missions m ON m.id = mt.mission_id
      WHERE m.status = 'active' AND UPPER(m.tier_code) = UPPER(?1)

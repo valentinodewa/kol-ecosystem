@@ -25,6 +25,11 @@
 			"database_name": "kol-ecosystem-local",
 			"database_id": "00000000-0000-0000-0000-000000000001",
 			"migrations_dir": "../../migrations"
+		},
+		{
+			"binding": "OPERATIONS_DB",
+			"database_name": "kol-ecosystem-local",
+			"database_id": "00000000-0000-0000-0000-000000000001"
 		}
 	],
 	"env": {
@@ -45,6 +50,11 @@
 					"database_name": "kol-ecosystem-staging",
 					"database_id": "0006b07e-33a6-44e0-b31b-8d4c32319eff",
 					"migrations_dir": "../../migrations"
+				},
+				{
+					"binding": "OPERATIONS_DB",
+					"database_name": "kol-ecosystem-staging",
+					"database_id": "0006b07e-33a6-44e0-b31b-8d4c32319eff"
 				}
 			]
 		},
@@ -65,6 +75,11 @@
 					"database_name": "kol-ecosystem-kol-dev",
 					"database_id": "143db6d7-0c3d-4754-9d94-9b1362e1c761",
 					"migrations_dir": "../../migrations"
+				},
+				{
+					"binding": "OPERATIONS_DB",
+					"database_name": "kol-ecosystem-staging",
+					"database_id": "0006b07e-33a6-44e0-b31b-8d4c32319eff"
 				}
 			]
 		}
