@@ -92,6 +92,7 @@ type MissionDbRow = {
   id: string; name: string; description: string | null; tier_code: string;
   start_date: string; end_date: string; reward_description: string | null;
   status: "draft" | "active" | "completed" | "cancelled";
+  participant_target: number;
   participant_count: number; created_at: string; updated_at: string;
 };
 
@@ -384,7 +385,7 @@ app.get("/api/v1/admin/missions", async (context) => {
      GROUP BY m.id ORDER BY m.start_date DESC, m.created_at DESC`,
   ).all<MissionDbRow>();
   const targets = await context.env.DB.prepare("SELECT mission_id, metric, target_value FROM mission_targets ORDER BY position, id").all<{ mission_id: string; metric: "registered" | "active" | "nmat" | "transactions" | "revenue"; target_value: number }>();
-  const items = missions.results.map((row) => missionRecordSchema.parse({ id: row.id, name: row.name, description: row.description, tierCode: row.tier_code, startDate: row.start_date, endDate: row.end_date, rewardDescription: row.reward_description, status: row.status, participantCount: row.participant_count, createdAt: row.created_at, updatedAt: row.updated_at, targets: targets.results.filter((target) => target.mission_id === row.id).map((target) => ({ metric: target.metric, targetValue: target.target_value })) }));
+  const items = missions.results.map((row) => missionRecordSchema.parse({ id: row.id, name: row.name, description: row.description, tierCode: row.tier_code, startDate: row.start_date, endDate: row.end_date, rewardDescription: row.reward_description, status: row.status, participantTarget: row.participant_target, participantCount: row.participant_count, createdAt: row.created_at, updatedAt: row.updated_at, targets: targets.results.filter((target) => target.mission_id === row.id).map((target) => ({ metric: target.metric, targetValue: target.target_value })) }));
   return context.json(missionListResponseSchema.parse({ items }));
 });
 
@@ -392,9 +393,9 @@ app.post("/api/v1/admin/missions", zValidator("json", missionCreateRequestSchema
   const input = context.req.valid("json");
   const id = crypto.randomUUID();
   const statements: D1PreparedStatement[] = [context.env.DB.prepare(
-    `INSERT INTO missions (id, name, description, tier_code, start_date, end_date, reward_description, status)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-  ).bind(id, input.name, input.description ?? null, input.tierCode, input.startDate, input.endDate, input.rewardDescription ?? null, input.status)];
+    `INSERT INTO missions (id, name, description, tier_code, start_date, end_date, reward_description, status, participant_target)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+  ).bind(id, input.name, input.description ?? null, input.tierCode, input.startDate, input.endDate, input.rewardDescription ?? null, input.status, input.participantTarget)];
   input.targets.forEach((target, index) => statements.push(context.env.DB.prepare(
     "INSERT INTO mission_targets (mission_id, metric, target_value, position) VALUES (?1, ?2, ?3, ?4)",
   ).bind(id, target.metric, target.targetValue, index)));
@@ -414,10 +415,10 @@ app.patch("/api/v1/admin/missions/:id", zValidator("json", missionUpdateRequestS
   const id = context.req.param("id"); const input = context.req.valid("json");
   const current = await context.env.DB.prepare("SELECT * FROM missions WHERE id=?1").bind(id).first<MissionDbRow>();
   if (!current) return context.json({ error: "not_found", message: "Mission tidak ditemukan" }, 404);
-  const merged = { name: input.name ?? current.name, description: input.description === undefined ? current.description : input.description, tierCode: input.tierCode ?? current.tier_code, startDate: input.startDate ?? current.start_date, endDate: input.endDate ?? current.end_date, rewardDescription: input.rewardDescription === undefined ? current.reward_description : input.rewardDescription, status: input.status ?? current.status };
+  const merged = { name: input.name ?? current.name, description: input.description === undefined ? current.description : input.description, tierCode: input.tierCode ?? current.tier_code, startDate: input.startDate ?? current.start_date, endDate: input.endDate ?? current.end_date, rewardDescription: input.rewardDescription === undefined ? current.reward_description : input.rewardDescription, status: input.status ?? current.status, participantTarget: input.participantTarget ?? current.participant_target };
   const statements: D1PreparedStatement[] = [context.env.DB.prepare(
-    `UPDATE missions SET name=?1, description=?2, tier_code=?3, start_date=?4, end_date=?5, reward_description=?6, status=?7, updated_at=?8 WHERE id=?9`,
-  ).bind(merged.name, merged.description ?? null, merged.tierCode, merged.startDate, merged.endDate, merged.rewardDescription ?? null, merged.status, new Date().toISOString(), id)];
+    `UPDATE missions SET name=?1, description=?2, tier_code=?3, start_date=?4, end_date=?5, reward_description=?6, status=?7, participant_target=?8, updated_at=?9 WHERE id=?10`,
+  ).bind(merged.name, merged.description ?? null, merged.tierCode, merged.startDate, merged.endDate, merged.rewardDescription ?? null, merged.status, merged.participantTarget, new Date().toISOString(), id)];
   if (input.targets) {
     statements.push(context.env.DB.prepare("DELETE FROM mission_targets WHERE mission_id=?1").bind(id));
     input.targets.forEach((target, index) => statements.push(context.env.DB.prepare("INSERT INTO mission_targets (mission_id, metric, target_value, position) VALUES (?1,?2,?3,?4)").bind(id, target.metric, target.targetValue, index)));

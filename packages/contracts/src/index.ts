@@ -161,6 +161,7 @@ export const missionCreateRequestSchema = z.object({
   endDate: isoDateSchema,
   rewardDescription: z.string().trim().max(500).nullable().optional(),
   status: z.enum(["draft", "active", "completed", "cancelled"]).default("draft"),
+  participantTarget: z.number().int().nonnegative().default(0),
   targets: z.array(missionTargetSchema).min(1).max(5),
 }).refine((value) => value.endDate >= value.startDate, {
   message: "endDate tidak boleh lebih awal dari startDate",
@@ -174,6 +175,7 @@ export const missionUpdateRequestSchema = z.object({
   endDate: isoDateSchema.optional(),
   rewardDescription: z.string().trim().max(500).nullable().optional(),
   status: z.enum(["draft", "active", "completed", "cancelled"]).optional(),
+  participantTarget: z.number().int().nonnegative().optional(),
   targets: z.array(missionTargetSchema).min(1).max(5).optional(),
 }).refine(
   (value) => Object.keys(value).length > 0,
