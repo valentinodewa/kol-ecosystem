@@ -128,6 +128,13 @@ export const kolImportRequestSchema = z.object({
 
 export const kolListResponseSchema = z.object({ items: z.array(kolRecordSchema) });
 
+export const kolAccountCreateRequestSchema = z.object({
+  kolId: z.number().int().positive(),
+  username: z.string().trim().min(4).max(64).regex(/^[A-Za-z0-9._-]+$/, "Username hanya boleh berisi huruf, angka, titik, garis bawah, atau tanda hubung"),
+});
+
+export const kolAccountStatusRequestSchema = z.object({ isActive: z.boolean() });
+
 export const rosterRowSchema = z.object({
   uplineId: uplineIdSchema,
   tierCode: tierCodeSchema.nullable().optional(),

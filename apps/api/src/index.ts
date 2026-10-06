@@ -17,6 +17,8 @@ import {
   kolListResponseSchema,
   kolRecordSchema,
   kolUpdateRequestSchema,
+  kolAccountCreateRequestSchema,
+  kolAccountStatusRequestSchema,
   missionCreateRequestSchema,
   missionUpdateRequestSchema,
   missionListResponseSchema,
@@ -183,6 +185,11 @@ async function createPasswordHash(password: string) {
   const key = await crypto.subtle.importKey("raw", textEncoder.encode(password), "PBKDF2", false, ["deriveBits"]);
   const hash = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256));
   return { salt: bytesToBase64Url(salt), hash: bytesToBase64Url(hash), iterations };
+}
+
+function createTemporaryPassword() {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `K!${bytesToBase64Url(bytes)}9a`;
 }
 
 async function hasValidBearerToken(authorization: string | undefined, expectedToken: string) {
@@ -437,6 +444,64 @@ app.get(
     return context.json(payload);
   },
 );
+
+app.get("/api/v1/admin/kol-accounts", async (context) => {
+  const rows = await context.env.DB.prepare(
+    `SELECT k.id AS kol_id, k.upline_id, k.name AS kol_name, k.tier_code, k.status AS kol_status,
+            a.id AS account_id, a.username, a.is_active, a.must_change_password,
+            a.last_login_at, a.created_at AS account_created_at
+     FROM kols k LEFT JOIN kol_accounts a ON a.kol_id = k.id
+     ORDER BY CASE WHEN a.id IS NULL THEN 0 ELSE 1 END, k.name COLLATE NOCASE ASC`,
+  ).all<{ kol_id: number; upline_id: string; kol_name: string; tier_code: string | null; kol_status: string; account_id: number | null; username: string | null; is_active: number | null; must_change_password: number | null; last_login_at: string | null; account_created_at: string | null }>();
+  return context.json({ items: rows.results.map((row) => ({
+    kolId: row.kol_id, uplineId: row.upline_id, kolName: row.kol_name, tierCode: row.tier_code,
+    kolStatus: row.kol_status, accountId: row.account_id, username: row.username,
+    isActive: row.is_active === 1, mustChangePassword: row.must_change_password === 1,
+    lastLoginAt: row.last_login_at, createdAt: row.account_created_at,
+  })) });
+});
+
+app.post("/api/v1/admin/kol-accounts", zValidator("json", kolAccountCreateRequestSchema), async (context) => {
+  const input = context.req.valid("json");
+  const kol = await context.env.DB.prepare("SELECT id FROM kols WHERE id = ?1").bind(input.kolId).first<{ id: number }>();
+  if (!kol) return context.json({ error: "not_found", message: "KOL tidak ditemukan" }, 404);
+  const existing = await context.env.DB.prepare("SELECT id FROM kol_accounts WHERE kol_id = ?1 OR username = ?2 COLLATE NOCASE").bind(input.kolId, input.username).first<{ id: number }>();
+  if (existing) return context.json({ error: "conflict", message: "KOL atau username tersebut sudah memiliki akun" }, 409);
+  const temporaryPassword = createTemporaryPassword();
+  const password = await createPasswordHash(temporaryPassword);
+  const result = await context.env.DB.prepare(
+    `INSERT INTO kol_accounts (kol_id, username, password_salt, password_hash, password_iterations, is_active, must_change_password)
+     VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)`,
+  ).bind(input.kolId, input.username, password.salt, password.hash, password.iterations).run();
+  return context.json({ accountId: Number(result.meta.last_row_id), username: input.username, temporaryPassword, mustChangePassword: true }, 201);
+});
+
+app.post("/api/v1/admin/kol-accounts/:id/reset-password", async (context) => {
+  const accountId = Number(context.req.param("id"));
+  if (!Number.isInteger(accountId) || accountId < 1) return context.json({ error: "invalid_id", message: "ID akun tidak valid" }, 400);
+  const account = await context.env.DB.prepare("SELECT id, username FROM kol_accounts WHERE id = ?1").bind(accountId).first<{ id: number; username: string }>();
+  if (!account) return context.json({ error: "not_found", message: "Akun KOL tidak ditemukan" }, 404);
+  const temporaryPassword = createTemporaryPassword();
+  const password = await createPasswordHash(temporaryPassword);
+  const changedAt = new Date().toISOString();
+  await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE kol_accounts SET password_salt = ?1, password_hash = ?2, password_iterations = ?3,
+      must_change_password = 1, updated_at = ?4 WHERE id = ?5`).bind(password.salt, password.hash, password.iterations, changedAt, accountId),
+    context.env.DB.prepare("UPDATE kol_sessions SET revoked_at = ?1 WHERE account_id = ?2 AND revoked_at IS NULL").bind(changedAt, accountId),
+  ]);
+  return context.json({ accountId, username: account.username, temporaryPassword, mustChangePassword: true });
+});
+
+app.patch("/api/v1/admin/kol-accounts/:id/status", zValidator("json", kolAccountStatusRequestSchema), async (context) => {
+  const accountId = Number(context.req.param("id"));
+  if (!Number.isInteger(accountId) || accountId < 1) return context.json({ error: "invalid_id", message: "ID akun tidak valid" }, 400);
+  const input = context.req.valid("json");
+  const changedAt = new Date().toISOString();
+  const result = await context.env.DB.prepare("UPDATE kol_accounts SET is_active = ?1, updated_at = ?2 WHERE id = ?3").bind(input.isActive ? 1 : 0, changedAt, accountId).run();
+  if (!result.meta.changes) return context.json({ error: "not_found", message: "Akun KOL tidak ditemukan" }, 404);
+  if (!input.isActive) await context.env.DB.prepare("UPDATE kol_sessions SET revoked_at = ?1 WHERE account_id = ?2 AND revoked_at IS NULL").bind(changedAt, accountId).run();
+  return context.json({ accountId, isActive: input.isActive });
+});
 
 app.get("/api/v1/admin/kols", async (context) => {
   const result = await context.env.DB.prepare(

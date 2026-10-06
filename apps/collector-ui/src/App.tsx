@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { authApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolPortalMission, type KolPortalProfile, type KolRecord, type MissionInput, type MissionRecord } from "./api";
+import { authApi, kolAccountApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolAccountRecord, type KolInput, type KolPortalMission, type KolPortalProfile, type KolRecord, type MissionInput, type MissionRecord, type TemporaryCredential } from "./api";
 import { mergeWorkbooks, parseFinancialWorkbook, parseNmatWorkbook, parseRegistrationWorkbook, type ImportRow } from "./workbooks";
 
-type Page = "home" | "performance" | "daily" | "master" | "monthly" | "missions" | "queries" | "history" | "settings";
+type Page = "home" | "performance" | "daily" | "master" | "accounts" | "monthly" | "missions" | "queries" | "history" | "settings";
 type UploadKind = "registration" | "nmat" | "financial" | "master" | "monthly";
 type UploadedFile = { name: string; size: string; rows: number };
 type Kol = { id: number; upline: string; name: string; tier: string; status: "Aktif" | "Nonaktif"; pic: string; notes: string };
@@ -15,6 +15,7 @@ const nav: Array<{ id: Page; code: string; label: string }> = [
   { id: "performance", code: "UP", label: "Update Performa" },
   { id: "daily", code: "DP", label: "Performa Harian" },
   { id: "master", code: "MK", label: "Master KOL" },
+  { id: "accounts", code: "AK", label: "Akun KOL" },
   { id: "monthly", code: "KB", label: "KOL Bulanan" },
   { id: "missions", code: "MS", label: "Mission" },
   { id: "queries", code: "QG", label: "Query Generator" },
@@ -192,6 +193,12 @@ export function App() {
   const [search, setSearch] = useState("");
   const [tierFilter, setTierFilter] = useState("");
   const [kols, setKols] = useState<Kol[]>([]);
+  const [kolAccounts, setKolAccounts] = useState<KolAccountRecord[]>([]);
+  const [accountSearch, setAccountSearch] = useState("");
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  const [accountCredential, setAccountCredential] = useState<TemporaryCredential | null>(null);
   const [masterLoading, setMasterLoading] = useState(true);
   const [masterSaving, setMasterSaving] = useState(false);
   const [masterError, setMasterError] = useState<string | null>(null);
@@ -219,6 +226,7 @@ export function App() {
   const [dailyError, setDailyError] = useState<string | null>(null);
 
   const visibleKols = useMemo(() => kols.filter((kol) => (!tierFilter || kol.tier === tierFilter) && `${kol.upline} ${kol.name} ${kol.tier}`.toLowerCase().includes(search.toLowerCase())), [kols, search, tierFilter]);
+  const visibleAccounts = useMemo(() => kolAccounts.filter((item) => `${item.uplineId} ${item.kolName} ${item.username ?? ""} ${item.tierCode ?? ""}`.toLowerCase().includes(accountSearch.toLowerCase())), [kolAccounts, accountSearch]);
   const activeKolCount = kols.filter((kol) => kol.status === "Aktif").length;
   const tierCount = new Set(kols.map((kol) => kol.tier).filter((tier) => tier !== "Belum diatur")).size;
   const tierSummary = useMemo(() => ["BARU","JELEK","BIASA","LUMAYAN","KUAT","Belum diatur"].map((tier)=>({tier,count:kols.filter((kol)=>kol.tier===tier).length})),[kols]);
@@ -267,6 +275,38 @@ export function App() {
   }, []);
 
   useEffect(() => { if (page === "missions") void missionApi.list().then(({items})=>{setMissions(items);setMissionError(null)}).catch((error:unknown)=>setMissionError(error instanceof Error?error.message:"Mission gagal dimuat")); }, [page]);
+
+  async function loadKolAccounts() {
+    setAccountLoading(true); setAccountError(null);
+    try { setKolAccounts((await kolAccountApi.list()).items); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : "Daftar akun KOL gagal dimuat"); }
+    finally { setAccountLoading(false); }
+  }
+
+  useEffect(() => { if (page === "accounts" && authApi.role() === "admin") void loadKolAccounts(); }, [page]);
+
+  async function createKolAccount(item: KolAccountRecord) {
+    const suggested = `kol${item.uplineId.toLowerCase()}`;
+    const username = window.prompt("Username akun KOL", suggested)?.trim();
+    if (!username) return;
+    setAccountLoading(true); setAccountError(null); setAccountNotice(null);
+    try { setAccountCredential(await kolAccountApi.create(item.kolId, username)); await loadKolAccounts(); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : "Akun KOL gagal dibuat"); setAccountLoading(false); }
+  }
+
+  async function resetKolPassword(item: KolAccountRecord) {
+    if (!item.accountId || !window.confirm(`Reset password ${item.username}? Semua sesi aktif akan dikeluarkan.`)) return;
+    setAccountLoading(true); setAccountError(null); setAccountNotice(null);
+    try { setAccountCredential(await kolAccountApi.resetPassword(item.accountId)); await loadKolAccounts(); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : "Password gagal direset"); setAccountLoading(false); }
+  }
+
+  async function toggleKolAccount(item: KolAccountRecord) {
+    if (!item.accountId || !window.confirm(`${item.isActive ? "Nonaktifkan" : "Aktifkan"} akun ${item.username}?`)) return;
+    setAccountLoading(true); setAccountError(null); setAccountNotice(null);
+    try { await kolAccountApi.setActive(item.accountId, !item.isActive); setAccountNotice(`Akses ${item.username} berhasil ${item.isActive ? "dinonaktifkan" : "diaktifkan"}.`); await loadKolAccounts(); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : "Status akun gagal diubah"); setAccountLoading(false); }
+  }
 
   async function loadDailyPerformance() {
     if (dailyEnd < dailyStart) { setDailyError("Tanggal akhir tidak boleh lebih awal dari tanggal awal"); return; }
@@ -423,7 +463,7 @@ export function App() {
   return <div className="portal-shell">
     <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
       <div className="brand"><span className="brand-mark">K</span><span><strong>KOL Operations</strong><small>Local workspace</small></span></div>
-      <nav aria-label="Navigasi utama">{nav.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => choosePage(item.id)}><span>{item.code}</span>{item.label}{["queries", "history", "settings"].includes(item.id) ? <small>Segera</small> : null}</button>)}</nav>
+      <nav aria-label="Navigasi utama">{nav.filter((item)=>item.id!=="accounts"||authApi.role()==="admin").map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => choosePage(item.id)}><span>{item.code}</span>{item.label}{["queries", "history", "settings"].includes(item.id) ? <small>Segera</small> : null}</button>)}</nav>
       <div className="sidebar-footer"><div className="avatar">{(authApi.username() ?? "AD").slice(0,2).toUpperCase()}</div><div><strong>{authApi.username() ?? "Administrator"}</strong><small>{authApi.role()==="admin"?"Super admin":authApi.role()==="operator"?"Operator":"Local admin"}</small></div><button className="logout-button" onClick={()=>{void authApi.logout().finally(()=>setAuthenticated(false))}}>Keluar</button></div>
     </aside>
     <div className="workspace">
@@ -476,6 +516,14 @@ export function App() {
           <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>PIC</th><th>Keterangan</th><th>Status</th><th /></tr></thead><tbody>{masterLoading ? <tr><td colSpan={7}>Memuat data staging…</td></tr> : visibleKols.length === 0 ? <tr><td colSpan={7}>Belum ada data KOL yang sesuai.</td></tr> : visibleKols.map((kol) => <tr key={kol.id}><td><strong className="upline">{kol.upline}</strong></td><td><div className="person"><span>{kol.name.slice(0, 2).toUpperCase()}</span><strong>{kol.name}</strong></div></td><td><span className={`tier tier-${kol.tier.toLowerCase().replaceAll(" ", "-")}`}>{kol.tier}</span></td><td>{kol.pic}</td><td className="kol-notes" title={kol.notes}>{kol.notes || "—"}</td><td><span className={`status status-${kol.status.toLowerCase()}`}>{kol.status}</span></td><td><button className="edit-button" onClick={() => { setEditingKol(kol); setShowForm(true); }}>Edit</button></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleKols.length} dari {kols.length} KOL</span></div>
         </section>
         {showForm && <div className="modal-backdrop" onMouseDown={() => !masterSaving && setShowForm(false)}><form className="modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveKol(event.currentTarget); }}><div className="modal-heading"><div><p className="eyebrow">MASTER KOL</p><h2>{editingKol ? "Edit data KOL" : "Tambah KOL baru"}</h2><p>Perubahan akan langsung disimpan ke database staging.</p></div><button type="button" disabled={masterSaving} onClick={() => setShowForm(false)}>×</button></div><label>Upline ID<input name="upline" placeholder="Contoh: FA582386" defaultValue={editingKol?.upline} required /></label>{editingKol && <div className="id-warning">Perubahan Upline ID ikut tercatat dalam audit log.</div>}<label>Nama KOL<input name="name" placeholder="Nama lengkap atau nama channel" defaultValue={editingKol?.name} required /></label><div className="form-row"><label>Tier<select name="tier" defaultValue={editingKol?.tier === "Belum diatur" ? "" : editingKol?.tier ?? ""}><option value="">Belum diatur</option><option>BARU</option><option>JELEK</option><option>BIASA</option><option>LUMAYAN</option><option>KUAT</option></select></label><label>PIC<input name="pic" placeholder="Nama PIC" defaultValue={editingKol?.pic === "—" ? "" : editingKol?.pic} /></label></div><label>Keterangan<textarea name="notes" rows={3} placeholder="Catatan tambahan tentang KOL" defaultValue={editingKol?.notes ?? ""} /></label><label>Status<select name="status" defaultValue={editingKol?.status ?? "Aktif"}><option>Aktif</option><option>Nonaktif</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" disabled={masterSaving} onClick={() => setShowForm(false)}>Batal</button><button className="primary-button" disabled={masterSaving} type="submit">{masterSaving ? "Menyimpan…" : editingKol ? "Simpan perubahan" : "Tambah ke daftar"}</button></div></form></div>}
+      </main>}
+      {page === "accounts" && <main><Header title="Akun KOL" subtitle="Kelola akses portal pribadi tanpa menyimpan atau menampilkan password lama." />
+        <section className="account-summary"><article><strong>{kolAccounts.length}</strong><span>Master KOL</span></article><article><strong>{kolAccounts.filter((item)=>item.accountId).length}</strong><span>Sudah punya akun</span></article><article><strong>{kolAccounts.filter((item)=>!item.accountId).length}</strong><span>Belum punya akun</span></article><article><strong>{kolAccounts.filter((item)=>item.accountId&&item.isActive).length}</strong><span>Akun aktif</span></article></section>
+        <section className="panel account-panel"><div className="master-toolbar"><div className="search"><span>⌕</span><input placeholder="Cari KOL, upline, username, atau tier…" value={accountSearch} onChange={(event)=>setAccountSearch(event.target.value)}/></div><button className="secondary-button" disabled={accountLoading} onClick={()=>void loadKolAccounts()}>{accountLoading?"Memuat…":"Perbarui"}</button></div>
+          {accountError&&<div className="api-message api-error"><strong>Gagal</strong><span>{accountError}</span></div>}{accountNotice&&<div className="api-message api-success"><strong>Berhasil</strong><span>{accountNotice}</span></div>}
+          <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>Username</th><th>Status akses</th><th>Login terakhir</th><th>Aksi</th></tr></thead><tbody>{accountLoading&&!kolAccounts.length?<tr><td colSpan={7}>Memuat akun KOL…</td></tr>:visibleAccounts.length===0?<tr><td colSpan={7}>Belum ada data yang sesuai.</td></tr>:visibleAccounts.map((item)=><tr key={item.kolId}><td><strong className="upline">{item.uplineId}</strong></td><td>{item.kolName}</td><td><span className={`tier tier-${(item.tierCode??"belum-diatur").toLowerCase().replaceAll(" ","-")}`}>{item.tierCode??"Belum diatur"}</span></td><td>{item.username??"—"}</td><td>{item.accountId?<span className={`status status-${item.isActive?"aktif":"nonaktif"}`}>{item.isActive?"Aktif":"Nonaktif"}</span>:<span className="account-none">Belum dibuat</span>}</td><td>{item.lastLoginAt?dateFormat.format(new Date(item.lastLoginAt)):"Belum pernah"}</td><td><div className="account-actions">{!item.accountId?<button className="edit-button" disabled={accountLoading||item.kolStatus!=="active"} onClick={()=>void createKolAccount(item)}>Buat akun</button>:<><button className="edit-button" disabled={accountLoading} onClick={()=>void resetKolPassword(item)}>Reset password</button><button className="edit-button" disabled={accountLoading} onClick={()=>void toggleKolAccount(item)}>{item.isActive?"Nonaktifkan":"Aktifkan"}</button></>}</div></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleAccounts.length} dari {kolAccounts.length} KOL</span></div>
+        </section>
+        {accountCredential&&<div className="modal-backdrop" onMouseDown={()=>setAccountCredential(null)}><div className="modal credential-modal" onMouseDown={(event)=>event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">KREDENSIAL SEMENTARA</p><h2>Simpan sebelum menutup</h2><p>Password ini hanya ditampilkan satu kali dan wajib diganti oleh KOL saat login.</p></div><button type="button" onClick={()=>setAccountCredential(null)}>×</button></div><div className="credential-box"><small>Username</small><strong>{accountCredential.username}</strong><small>Password sementara</small><strong>{accountCredential.temporaryPassword}</strong></div><div className="modal-actions"><button className="secondary-button" onClick={()=>void navigator.clipboard.writeText(`Username: ${accountCredential.username}\nPassword sementara: ${accountCredential.temporaryPassword}`).then(()=>setAccountNotice("Kredensial sementara disalin ke clipboard."))}>Salin kredensial</button><button className="primary-button" onClick={()=>setAccountCredential(null)}>Sudah disimpan</button></div></div></div>}
       </main>}
       {["queries", "history", "settings"].includes(page) && <main><Header title={nav.find((item) => item.id === page)?.label ?? "Segera hadir"} subtitle="Halaman ini disiapkan untuk fase pengembangan berikutnya." /><section className="coming-soon"><span>{nav.find((item) => item.id === page)?.code}</span><h2>Fondasinya sudah disiapkan.</h2><p>Kita akan mengaktifkan fungsi ini setelah alur Update Performa dan Master KOL disetujui.</p><button className="secondary-button" onClick={() => choosePage("home")}>Kembali ke beranda</button></section></main>}
     </div>

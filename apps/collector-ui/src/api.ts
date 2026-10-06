@@ -37,6 +37,8 @@ export type MissionRecord = { id: string; name: string; description: string | nu
 export type MissionInput = Omit<MissionRecord, "id" | "participantCount" | "createdAt" | "updatedAt">;
 export type KolPortalProfile = { uplineId: string; name: string; tierCode: string | null; status: string; joinedAt: string | null; picName: string | null; mustChangePassword: boolean };
 export type KolPortalMission = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "active"; targets: MissionTarget[] };
+export type KolAccountRecord = { kolId: number; uplineId: string; kolName: string; tierCode: string | null; kolStatus: string; accountId: number | null; username: string | null; isActive: boolean; mustChangePassword: boolean; lastLoginAt: string | null; createdAt: string | null };
+export type TemporaryCredential = { accountId: number; username: string; temporaryPassword: string; mustChangePassword: boolean };
 
 const remoteApi = import.meta.env.VITE_API_URL ?? "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
 const tokenKey = "kol-auth-token-v3";
@@ -76,6 +78,13 @@ export const kolApi = {
     if (!response.ok) { const body = await response.json().catch(()=>null) as {message?:string}|null; throw new Error(body?.message ?? `Google Sheet gagal dibaca (${response.status})`); }
     return response.text();
   },
+};
+
+export const kolAccountApi = {
+  list: () => request<{ items: KolAccountRecord[] }>("/kol-accounts", undefined, true),
+  create: (kolId: number, username: string) => request<TemporaryCredential>("/kol-accounts", { method: "POST", body: JSON.stringify({ kolId, username }) }, true),
+  resetPassword: (accountId: number) => request<TemporaryCredential>(`/kol-accounts/${accountId}/reset-password`, { method: "POST" }, true),
+  setActive: (accountId: number, isActive: boolean) => request<{ accountId: number; isActive: boolean }>(`/kol-accounts/${accountId}/status`, { method: "PATCH", body: JSON.stringify({ isActive }) }, true),
 };
 
 export const performanceApi = {
