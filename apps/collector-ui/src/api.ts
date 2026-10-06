@@ -123,6 +123,14 @@ export const kolPortalApi = {
     if (!response.ok || !body || !Array.isArray(body.items)) throw new Error(body?.message ?? `Mission KOL gagal dimuat (${response.status})`);
     return { tierCode: body.tierCode ?? null, items: body.items };
   },
+  performance: async (periodStart: string, periodEnd: string): Promise<{ periodStart: string; periodEnd: string; uplineId: string; items: DailyPerformanceRow[] }> => {
+    const token = sessionToken();
+    const params = new URLSearchParams({ periodStart, periodEnd });
+    const response = await fetch(`${remoteApi}/api/v1/kol/performance?${params}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const body = await response.json().catch(() => null) as { periodStart?: string; periodEnd?: string; uplineId?: string; items?: DailyPerformanceRow[]; message?: string } | null;
+    if (!response.ok || !body?.periodStart || !body.periodEnd || !body.uplineId || !Array.isArray(body.items)) throw new Error(body?.message ?? `Performa KOL gagal dimuat (${response.status})`);
+    return body as { periodStart: string; periodEnd: string; uplineId: string; items: DailyPerformanceRow[] };
+  },
 };
 
 export const missionApi = {

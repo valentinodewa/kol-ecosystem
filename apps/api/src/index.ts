@@ -9,6 +9,8 @@ import {
   loginRequestSchema,
   dailyPerformanceListResponseSchema,
   dailyPerformanceQuerySchema,
+  kolPerformanceQuerySchema,
+  kolPerformanceResponseSchema,
   kolCreateRequestSchema,
   kolImportRequestSchema,
   kolListResponseSchema,
@@ -299,6 +301,46 @@ app.get("/api/v1/kol/missions", async (context) => {
       targets: targets.results.filter((target) => target.mission_id === mission.id).map((target) => ({ metric: target.metric, targetValue: target.target_value })),
     })),
   });
+});
+
+app.get("/api/v1/kol/performance", zValidator("query", kolPerformanceQuerySchema), async (context) => {
+  const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
+  if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
+  const query = context.req.valid("query");
+  const result = await context.env.DB.prepare(
+    `SELECT d.performance_date, k.upline_id, k.name AS kol_name,
+            d.total_registered, d.total_active, d.total_nmat, d.total_achieve_trx,
+            d.total_achieve_rev, d.total_activation_commission,
+            d.total_activation_revenue, d.synced_at
+     FROM kol_daily_performance d INNER JOIN kols k ON k.id = d.kol_id
+     WHERE d.kol_id = ?1 AND k.upline_id = ?2
+       AND d.performance_date BETWEEN ?3 AND ?4
+     ORDER BY d.performance_date ASC`,
+  ).bind(session.kolId, session.uplineId, query.periodStart, query.periodEnd).all<{
+    performance_date: string; upline_id: string; kol_name: string;
+    total_registered: number; total_active: number; total_nmat: number;
+    total_achieve_trx: number; total_achieve_rev: number;
+    total_activation_commission: number; total_activation_revenue: number;
+    synced_at: string;
+  }>();
+  return context.json(kolPerformanceResponseSchema.parse({
+    periodStart: query.periodStart,
+    periodEnd: query.periodEnd,
+    uplineId: session.uplineId,
+    items: result.results.map((row) => ({
+      performanceDate: row.performance_date,
+      uplineId: row.upline_id,
+      kolName: row.kol_name,
+      totalRegistered: row.total_registered,
+      totalActive: row.total_active,
+      totalNmat: row.total_nmat,
+      totalAchieveTrx: row.total_achieve_trx,
+      totalAchieveRev: row.total_achieve_rev,
+      totalActivationCommission: row.total_activation_commission,
+      totalActivationRevenue: row.total_activation_revenue,
+      syncedAt: row.synced_at,
+    })),
+  }));
 });
 
 app.get("/api/v1/db/health", async (context) => {

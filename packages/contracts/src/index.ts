@@ -197,6 +197,10 @@ export const dailyPerformanceQuerySchema = performanceQuerySchema.extend({
   uplineId: uplineIdSchema.optional(),
 });
 
+// Portal KOL tidak menerima uplineId. Identitas selalu diambil dari sesi KOL
+// agar pengguna tidak dapat membaca performa KOL lain melalui query string.
+export const kolPerformanceQuerySchema = performanceQuerySchema;
+
 export const dailyPerformanceRowSchema = z.object({
   performanceDate: isoDateSchema,
   uplineId: uplineIdSchema,
@@ -216,6 +220,10 @@ export const dailyPerformanceListResponseSchema = z.object({
   periodEnd: isoDateSchema,
   uplineId: uplineIdSchema.nullable(),
   items: z.array(dailyPerformanceRowSchema),
+});
+
+export const kolPerformanceResponseSchema = dailyPerformanceListResponseSchema.extend({
+  uplineId: uplineIdSchema,
 });
 
 export const dailyPerformanceIngestionRowSchema = dailyPerformanceRowSchema.omit({ kolName: true, syncedAt: true, totalActivationCommission: true, totalActivationRevenue: true });
