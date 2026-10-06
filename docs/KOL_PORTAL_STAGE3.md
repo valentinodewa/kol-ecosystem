@@ -15,15 +15,15 @@ Tahap 3 menambahkan performa pribadi ke portal KOL dev tanpa mengubah portal ope
 
 Endpoint hanya menerima rentang tanggal. `kol_id` dan `upline_id` selalu diambil dari sesi KOL aktif. Parameter `uplineId` tambahan dari browser tidak digunakan sehingga KOL tidak dapat meminta data KOL lain.
 
-Respons berisi data harian untuk:
+API tetap menyimpan kontrak data lengkap untuk kompatibilitas internal. Portal KOL hanya menampilkan:
 
 - register;
 - aktivasi;
-- NMAT;
+- MPB (Mitra Produktif Baru), sebagai label publik untuk metrik NMAT;
 - transaksi;
-- revenue transaksi;
 - komisi aktivasi;
-- revenue aktivasi.
+
+Revenue transaksi dan revenue aktivasi tidak ditampilkan karena merupakan data internal Fastpay.
 
 ## Tampilan
 
@@ -42,4 +42,3 @@ Portal menyediakan:
 - akun pilot hanya menerima baris dengan upline `FA582386`;
 - query tambahan `uplineId=FA660738` tetap mengembalikan `FA582386`;
 - bundle Pages hanya memuat URL API koldev, bukan API staging.
-
