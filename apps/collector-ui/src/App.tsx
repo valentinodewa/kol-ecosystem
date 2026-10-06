@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { authApi, kolAccountApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolAccountRecord, type KolInput, type KolPortalMission, type KolPortalProfile, type KolRecord, type MissionInput, type MissionRecord, type TemporaryCredential } from "./api";
+import { authApi, kolAccountApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolAccountAuditRecord, type KolAccountRecord, type KolInput, type KolPortalMission, type KolPortalProfile, type KolRecord, type MissionInput, type MissionRecord, type TemporaryCredential } from "./api";
 import { mergeWorkbooks, parseFinancialWorkbook, parseNmatWorkbook, parseRegistrationWorkbook, type ImportRow } from "./workbooks";
 
 type Page = "home" | "performance" | "daily" | "master" | "accounts" | "monthly" | "missions" | "queries" | "history" | "settings";
@@ -19,7 +19,7 @@ const nav: Array<{ id: Page; code: string; label: string }> = [
   { id: "monthly", code: "KB", label: "KOL Bulanan" },
   { id: "missions", code: "MS", label: "Mission" },
   { id: "queries", code: "QG", label: "Query Generator" },
-  { id: "history", code: "HS", label: "Riwayat Sinkronisasi" },
+  { id: "history", code: "RA", label: "Riwayat Akses" },
   { id: "settings", code: "ST", label: "Pengaturan" },
 ];
 
@@ -199,6 +199,9 @@ export function App() {
   const [accountError, setAccountError] = useState<string | null>(null);
   const [accountNotice, setAccountNotice] = useState<string | null>(null);
   const [accountCredential, setAccountCredential] = useState<TemporaryCredential | null>(null);
+  const [accountAudit, setAccountAudit] = useState<KolAccountAuditRecord[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const [masterLoading, setMasterLoading] = useState(true);
   const [masterSaving, setMasterSaving] = useState(false);
   const [masterError, setMasterError] = useState<string | null>(null);
@@ -284,6 +287,15 @@ export function App() {
   }
 
   useEffect(() => { if (page === "accounts" && authApi.role() === "admin") void loadKolAccounts(); }, [page]);
+
+  async function loadAccountAudit() {
+    setAuditLoading(true); setAuditError(null);
+    try { setAccountAudit((await kolAccountApi.audit()).items); }
+    catch (error) { setAuditError(error instanceof Error ? error.message : "Riwayat akses gagal dimuat"); }
+    finally { setAuditLoading(false); }
+  }
+
+  useEffect(() => { if (page === "history" && authApi.role() === "admin") void loadAccountAudit(); }, [page]);
 
   async function createKolAccount(item: KolAccountRecord) {
     const suggested = `kol${item.uplineId.toLowerCase()}`;
@@ -463,7 +475,7 @@ export function App() {
   return <div className="portal-shell">
     <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
       <div className="brand"><span className="brand-mark">K</span><span><strong>KOL Operations</strong><small>Local workspace</small></span></div>
-      <nav aria-label="Navigasi utama">{nav.filter((item)=>item.id!=="accounts"||authApi.role()==="admin").map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => choosePage(item.id)}><span>{item.code}</span>{item.label}{["queries", "history", "settings"].includes(item.id) ? <small>Segera</small> : null}</button>)}</nav>
+      <nav aria-label="Navigasi utama">{nav.filter((item)=>(item.id!=="accounts"&&item.id!=="history")||authApi.role()==="admin").map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => choosePage(item.id)}><span>{item.code}</span>{item.label}{["queries", "settings"].includes(item.id) ? <small>Segera</small> : null}</button>)}</nav>
       <div className="sidebar-footer"><div className="avatar">{(authApi.username() ?? "AD").slice(0,2).toUpperCase()}</div><div><strong>{authApi.username() ?? "Administrator"}</strong><small>{authApi.role()==="admin"?"Super admin":authApi.role()==="operator"?"Operator":"Local admin"}</small></div><button className="logout-button" onClick={()=>{void authApi.logout().finally(()=>setAuthenticated(false))}}>Keluar</button></div>
     </aside>
     <div className="workspace">
@@ -525,7 +537,10 @@ export function App() {
         </section>
         {accountCredential&&<div className="modal-backdrop" onMouseDown={()=>setAccountCredential(null)}><div className="modal credential-modal" onMouseDown={(event)=>event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">KREDENSIAL SEMENTARA</p><h2>Simpan sebelum menutup</h2><p>Password ini hanya ditampilkan satu kali dan wajib diganti oleh KOL saat login.</p></div><button type="button" onClick={()=>setAccountCredential(null)}>×</button></div><div className="credential-box"><small>Username</small><strong>{accountCredential.username}</strong><small>Password sementara</small><strong>{accountCredential.temporaryPassword}</strong></div><div className="modal-actions"><button className="secondary-button" onClick={()=>void navigator.clipboard.writeText(`Username: ${accountCredential.username}\nPassword sementara: ${accountCredential.temporaryPassword}`).then(()=>setAccountNotice("Kredensial sementara disalin ke clipboard."))}>Salin kredensial</button><button className="primary-button" onClick={()=>setAccountCredential(null)}>Sudah disimpan</button></div></div></div>}
       </main>}
-      {["queries", "history", "settings"].includes(page) && <main><Header title={nav.find((item) => item.id === page)?.label ?? "Segera hadir"} subtitle="Halaman ini disiapkan untuk fase pengembangan berikutnya." /><section className="coming-soon"><span>{nav.find((item) => item.id === page)?.code}</span><h2>Fondasinya sudah disiapkan.</h2><p>Kita akan mengaktifkan fungsi ini setelah alur Update Performa dan Master KOL disetujui.</p><button className="secondary-button" onClick={() => choosePage("home")}>Kembali ke beranda</button></section></main>}
+      {page === "history" && <main><Header title="Riwayat Akses" subtitle="Jejak audit perubahan akun KOL oleh super admin." />
+        <section className="panel audit-panel"><div className="panel-heading"><div><p className="eyebrow">AUDIT KEAMANAN</p><h2>100 aktivitas akun terbaru</h2><p>Catatan ini tidak memuat password sementara maupun hash password.</p></div><button className="secondary-button" disabled={auditLoading} onClick={()=>void loadAccountAudit()}>{auditLoading?"Memuat…":"Perbarui"}</button></div>{auditError&&<div className="api-message api-error"><strong>Gagal</strong><span>{auditError}</span></div>}<div className="table-wrap"><table><thead><tr><th>Waktu</th><th>Pelaksana</th><th>Aktivitas</th><th>Username</th><th>KOL</th><th>Upline ID</th></tr></thead><tbody>{auditLoading&&!accountAudit.length?<tr><td colSpan={6}>Memuat riwayat akses…</td></tr>:accountAudit.length===0?<tr><td colSpan={6}>Belum ada aktivitas akun yang tercatat.</td></tr>:accountAudit.map((item)=><tr key={item.id}><td>{new Intl.DateTimeFormat("id-ID",{dateStyle:"medium",timeStyle:"short"}).format(new Date(item.createdAt))}</td><td><strong>{item.actorUsername}</strong></td><td><span className="audit-action">{{account_created:"Akun dibuat",password_reset:"Password direset",access_enabled:"Akses diaktifkan",access_disabled:"Akses dinonaktifkan"}[item.action]}</span></td><td>{item.username}</td><td>{item.kolName}</td><td><strong className="upline">{item.uplineId}</strong></td></tr>)}</tbody></table></div></section>
+      </main>}
+      {["queries", "settings"].includes(page) && <main><Header title={nav.find((item) => item.id === page)?.label ?? "Segera hadir"} subtitle="Halaman ini disiapkan untuk fase pengembangan berikutnya." /><section className="coming-soon"><span>{nav.find((item) => item.id === page)?.code}</span><h2>Fondasinya sudah disiapkan.</h2><p>Kita akan mengaktifkan fungsi ini setelah alur Update Performa dan Master KOL disetujui.</p><button className="secondary-button" onClick={() => choosePage("home")}>Kembali ke beranda</button></section></main>}
     </div>
   </div>;
 }

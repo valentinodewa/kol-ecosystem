@@ -192,6 +192,11 @@ function createTemporaryPassword() {
   return `K!${bytesToBase64Url(bytes)}9a`;
 }
 
+async function adminActor(authorization: string | undefined, secret: string) {
+  const session = await readSessionToken(authorization, secret);
+  return session?.role === "admin" ? session.sub : "admin-api-key";
+}
+
 async function hasValidBearerToken(authorization: string | undefined, expectedToken: string) {
   if (!authorization?.startsWith("Bearer ")) {
     return false;
@@ -461,6 +466,22 @@ app.get("/api/v1/admin/kol-accounts", async (context) => {
   })) });
 });
 
+app.get("/api/v1/admin/kol-account-audit", async (context) => {
+  const rows = await context.env.DB.prepare(
+    `SELECT l.id, l.actor_username, l.action, l.account_id, l.kol_id, l.username,
+            l.metadata_json, l.created_at, k.upline_id, k.name AS kol_name
+     FROM kol_account_audit_logs l INNER JOIN kols k ON k.id = l.kol_id
+     ORDER BY l.created_at DESC, l.id DESC LIMIT 100`,
+  ).all<{ id: number; actor_username: string; action: string; account_id: number; kol_id: number; username: string; metadata_json: string | null; created_at: string; upline_id: string; kol_name: string }>();
+  return context.json({ items: rows.results.map((row) => ({
+    id: row.id, actorUsername: row.actor_username, action: row.action,
+    accountId: row.account_id, kolId: row.kol_id, uplineId: row.upline_id,
+    kolName: row.kol_name, username: row.username,
+    metadata: row.metadata_json ? JSON.parse(row.metadata_json) as unknown : null,
+    createdAt: row.created_at,
+  })) });
+});
+
 app.post("/api/v1/admin/kol-accounts", zValidator("json", kolAccountCreateRequestSchema), async (context) => {
   const input = context.req.valid("json");
   const kol = await context.env.DB.prepare("SELECT id FROM kols WHERE id = ?1").bind(input.kolId).first<{ id: number }>();
@@ -473,13 +494,16 @@ app.post("/api/v1/admin/kol-accounts", zValidator("json", kolAccountCreateReques
     `INSERT INTO kol_accounts (kol_id, username, password_salt, password_hash, password_iterations, is_active, must_change_password)
      VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)`,
   ).bind(input.kolId, input.username, password.salt, password.hash, password.iterations).run();
-  return context.json({ accountId: Number(result.meta.last_row_id), username: input.username, temporaryPassword, mustChangePassword: true }, 201);
+  const accountId = Number(result.meta.last_row_id);
+  await context.env.DB.prepare("INSERT INTO kol_account_audit_logs (actor_username, action, account_id, kol_id, username) VALUES (?1, 'account_created', ?2, ?3, ?4)")
+    .bind(await adminActor(context.req.header("Authorization"), context.env.ADMIN_API_KEY), accountId, input.kolId, input.username).run();
+  return context.json({ accountId, username: input.username, temporaryPassword, mustChangePassword: true }, 201);
 });
 
 app.post("/api/v1/admin/kol-accounts/:id/reset-password", async (context) => {
   const accountId = Number(context.req.param("id"));
   if (!Number.isInteger(accountId) || accountId < 1) return context.json({ error: "invalid_id", message: "ID akun tidak valid" }, 400);
-  const account = await context.env.DB.prepare("SELECT id, username FROM kol_accounts WHERE id = ?1").bind(accountId).first<{ id: number; username: string }>();
+  const account = await context.env.DB.prepare("SELECT id, kol_id, username FROM kol_accounts WHERE id = ?1").bind(accountId).first<{ id: number; kol_id: number; username: string }>();
   if (!account) return context.json({ error: "not_found", message: "Akun KOL tidak ditemukan" }, 404);
   const temporaryPassword = createTemporaryPassword();
   const password = await createPasswordHash(temporaryPassword);
@@ -488,6 +512,8 @@ app.post("/api/v1/admin/kol-accounts/:id/reset-password", async (context) => {
     context.env.DB.prepare(`UPDATE kol_accounts SET password_salt = ?1, password_hash = ?2, password_iterations = ?3,
       must_change_password = 1, updated_at = ?4 WHERE id = ?5`).bind(password.salt, password.hash, password.iterations, changedAt, accountId),
     context.env.DB.prepare("UPDATE kol_sessions SET revoked_at = ?1 WHERE account_id = ?2 AND revoked_at IS NULL").bind(changedAt, accountId),
+    context.env.DB.prepare("INSERT INTO kol_account_audit_logs (actor_username, action, account_id, kol_id, username) VALUES (?1, 'password_reset', ?2, ?3, ?4)")
+      .bind(await adminActor(context.req.header("Authorization"), context.env.ADMIN_API_KEY), accountId, account.kol_id, account.username),
   ]);
   return context.json({ accountId, username: account.username, temporaryPassword, mustChangePassword: true });
 });
@@ -497,9 +523,15 @@ app.patch("/api/v1/admin/kol-accounts/:id/status", zValidator("json", kolAccount
   if (!Number.isInteger(accountId) || accountId < 1) return context.json({ error: "invalid_id", message: "ID akun tidak valid" }, 400);
   const input = context.req.valid("json");
   const changedAt = new Date().toISOString();
-  const result = await context.env.DB.prepare("UPDATE kol_accounts SET is_active = ?1, updated_at = ?2 WHERE id = ?3").bind(input.isActive ? 1 : 0, changedAt, accountId).run();
-  if (!result.meta.changes) return context.json({ error: "not_found", message: "Akun KOL tidak ditemukan" }, 404);
-  if (!input.isActive) await context.env.DB.prepare("UPDATE kol_sessions SET revoked_at = ?1 WHERE account_id = ?2 AND revoked_at IS NULL").bind(changedAt, accountId).run();
+  const account = await context.env.DB.prepare("SELECT kol_id, username FROM kol_accounts WHERE id = ?1").bind(accountId).first<{ kol_id: number; username: string }>();
+  if (!account) return context.json({ error: "not_found", message: "Akun KOL tidak ditemukan" }, 404);
+  const statements = [
+    context.env.DB.prepare("UPDATE kol_accounts SET is_active = ?1, updated_at = ?2 WHERE id = ?3").bind(input.isActive ? 1 : 0, changedAt, accountId),
+    context.env.DB.prepare("INSERT INTO kol_account_audit_logs (actor_username, action, account_id, kol_id, username) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .bind(await adminActor(context.req.header("Authorization"), context.env.ADMIN_API_KEY), input.isActive ? "access_enabled" : "access_disabled", accountId, account.kol_id, account.username),
+  ];
+  if (!input.isActive) statements.push(context.env.DB.prepare("UPDATE kol_sessions SET revoked_at = ?1 WHERE account_id = ?2 AND revoked_at IS NULL").bind(changedAt, accountId));
+  await context.env.DB.batch(statements);
   return context.json({ accountId, isActive: input.isActive });
 });
 

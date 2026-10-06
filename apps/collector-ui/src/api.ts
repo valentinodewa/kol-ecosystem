@@ -39,6 +39,7 @@ export type KolPortalProfile = { uplineId: string; name: string; tierCode: strin
 export type KolPortalMission = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "active"; targets: MissionTarget[] };
 export type KolAccountRecord = { kolId: number; uplineId: string; kolName: string; tierCode: string | null; kolStatus: string; accountId: number | null; username: string | null; isActive: boolean; mustChangePassword: boolean; lastLoginAt: string | null; createdAt: string | null };
 export type TemporaryCredential = { accountId: number; username: string; temporaryPassword: string; mustChangePassword: boolean };
+export type KolAccountAuditRecord = { id: number; actorUsername: string; action: "account_created" | "password_reset" | "access_enabled" | "access_disabled"; accountId: number; kolId: number; uplineId: string; kolName: string; username: string; metadata: unknown; createdAt: string };
 
 const remoteApi = import.meta.env.VITE_API_URL ?? "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
 const tokenKey = "kol-auth-token-v3";
@@ -85,6 +86,7 @@ export const kolAccountApi = {
   create: (kolId: number, username: string) => request<TemporaryCredential>("/kol-accounts", { method: "POST", body: JSON.stringify({ kolId, username }) }, true),
   resetPassword: (accountId: number) => request<TemporaryCredential>(`/kol-accounts/${accountId}/reset-password`, { method: "POST" }, true),
   setActive: (accountId: number, isActive: boolean) => request<{ accountId: number; isActive: boolean }>(`/kol-accounts/${accountId}/status`, { method: "PATCH", body: JSON.stringify({ isActive }) }, true),
+  audit: () => request<{ items: KolAccountAuditRecord[] }>("/kol-account-audit", undefined, true),
 };
 
 export const performanceApi = {
