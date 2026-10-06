@@ -28,7 +28,12 @@ import {
 } from "@kol/contracts";
 
 const app = new Hono<{ Bindings: Env }>();
-const operationsOrigins = ["http://localhost:4174", "http://127.0.0.1:4174", "https://kol-ecosystem-dashboard-staging.pages.dev"];
+const operationsOrigins = [
+  "http://localhost:4174",
+  "http://127.0.0.1:4174",
+  "https://kol-ecosystem-dashboard-staging.pages.dev",
+  "https://feature-kol-portal.kol-ecosystem-dashboard-staging.pages.dev",
+];
 
 const publicReadCors = cors({
   origin: "*",
@@ -51,6 +56,7 @@ const adminCors = cors({
 app.use("/api/v1/auth/*", adminCors);
 app.use("/api/v1/operator/*", adminCors);
 app.use("/api/v1/admin/*", adminCors);
+app.use("/api/v1/kol/*", adminCors);
 app.use("/api/v1/admin/*", async (context, next) => {
   const authorization = context.req.header("Authorization");
   const session = await readSessionToken(authorization, context.env.ADMIN_API_KEY);
@@ -122,8 +128,11 @@ async function tokenSignature(payload: string, secret: string) {
   return bytesToBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, textEncoder.encode(payload))));
 }
 
-async function createSessionToken(username: string, role: "admin" | "operator", secret: string) {
-  const payload = bytesToBase64Url(textEncoder.encode(JSON.stringify({ sub: username, role, exp: Math.floor(Date.now() / 1000) + 43200 })));
+type SessionRole = "admin" | "operator" | "kol";
+type SessionClaim = { sub: string; role: SessionRole; exp: number; sid?: string; kolId?: number; uplineId?: string };
+
+async function createSessionToken(claim: Omit<SessionClaim, "exp">, secret: string) {
+  const payload = bytesToBase64Url(textEncoder.encode(JSON.stringify({ ...claim, exp: Math.floor(Date.now() / 1000) + 43200 })));
   return `${payload}.${await tokenSignature(payload, secret)}`;
 }
 
@@ -132,9 +141,29 @@ async function readSessionToken(authorization: string | undefined, secret: strin
   const [payload, signature] = authorization.slice(7).split(".");
   if (!payload || !signature || signature !== await tokenSignature(payload, secret)) return null;
   try {
-    const claim = JSON.parse(new TextDecoder().decode(base64ToBytes(payload))) as { sub?: string; role?: "admin" | "operator"; exp?: number };
-    return claim.sub && (claim.role === "admin" || claim.role === "operator") && typeof claim.exp === "number" && claim.exp > Date.now() / 1000 ? claim : null;
+    const claim = JSON.parse(new TextDecoder().decode(base64ToBytes(payload))) as Partial<SessionClaim>;
+    return claim.sub && (claim.role === "admin" || claim.role === "operator" || claim.role === "kol") && typeof claim.exp === "number" && claim.exp > Date.now() / 1000 ? claim as SessionClaim : null;
   } catch { return null; }
+}
+
+async function sha256Base64Url(value: string) {
+  return bytesToBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", textEncoder.encode(value))));
+}
+
+async function readActiveKolSession(authorization: string | undefined, env: Env) {
+  const claim = await readSessionToken(authorization, env.ADMIN_API_KEY);
+  if (!claim || claim.role !== "kol" || !claim.sid || !claim.kolId || !claim.uplineId) return null;
+  const token = authorization?.slice(7);
+  if (!token) return null;
+  const session = await env.DB.prepare(
+    `SELECT s.id FROM kol_sessions s
+     INNER JOIN kol_accounts a ON a.id = s.account_id
+     INNER JOIN kols k ON k.id = a.kol_id
+     WHERE s.id = ?1 AND s.token_hash = ?2 AND s.revoked_at IS NULL
+       AND datetime(s.expires_at) > datetime('now') AND a.is_active = 1 AND k.status = 'active'
+       AND a.kol_id = ?3 AND k.upline_id = ?4`,
+  ).bind(claim.sid, await sha256Base64Url(token), claim.kolId, claim.uplineId).first<{ id: string }>();
+  return session ? claim : null;
 }
 
 async function validPassword(password: string, salt: string, expectedHash: string, iterations: number) {
@@ -174,17 +203,61 @@ app.post("/api/v1/auth/login", zValidator("json", loginRequestSchema), async (co
   const user = await context.env.DB.prepare(
     "SELECT username, password_salt, password_hash, password_iterations, role FROM operator_accounts WHERE username = ?1 COLLATE NOCASE AND is_active = 1",
   ).bind(input.username).first<{ username: string; password_salt: string; password_hash: string; password_iterations: number; role: "admin" | "operator" }>();
-  if (!user || !await validPassword(input.password, user.password_salt, user.password_hash, user.password_iterations)) {
+  if (user && await validPassword(input.password, user.password_salt, user.password_hash, user.password_iterations)) {
+    return context.json({ token: await createSessionToken({ sub: user.username, role: user.role }, context.env.ADMIN_API_KEY), user: { username: user.username, role: user.role }, expiresIn: 43200 });
+  }
+
+  const kolAccount = await context.env.DB.prepare(
+    `SELECT a.id AS account_id, a.username, a.password_salt, a.password_hash, a.password_iterations,
+            a.must_change_password, k.id AS kol_id, k.upline_id, k.name, k.tier_code
+     FROM kol_accounts a INNER JOIN kols k ON k.id = a.kol_id
+     WHERE a.username = ?1 COLLATE NOCASE AND a.is_active = 1 AND k.status = 'active'`,
+  ).bind(input.username).first<{ account_id: number; username: string; password_salt: string; password_hash: string; password_iterations: number; must_change_password: number; kol_id: number; upline_id: string; name: string; tier_code: string | null }>();
+  if (!kolAccount || !await validPassword(input.password, kolAccount.password_salt, kolAccount.password_hash, kolAccount.password_iterations)) {
     return context.json({ error: "unauthorized", message: "Username atau password salah" }, 401);
   }
-  return context.json({ token: await createSessionToken(user.username, user.role, context.env.ADMIN_API_KEY), user: { username: user.username, role: user.role }, expiresIn: 43200 });
+  const sessionId = crypto.randomUUID();
+  const token = await createSessionToken({ sub: kolAccount.username, role: "kol", sid: sessionId, kolId: kolAccount.kol_id, uplineId: kolAccount.upline_id }, context.env.ADMIN_API_KEY);
+  const expiresAt = new Date(Date.now() + 43200 * 1000).toISOString();
+  await context.env.DB.batch([
+    context.env.DB.prepare("INSERT INTO kol_sessions (id, account_id, token_hash, expires_at) VALUES (?1, ?2, ?3, ?4)").bind(sessionId, kolAccount.account_id, await sha256Base64Url(token), expiresAt),
+    context.env.DB.prepare("UPDATE kol_accounts SET last_login_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1").bind(kolAccount.account_id),
+  ]);
+  return context.json({ token, user: { username: kolAccount.username, role: "kol", uplineId: kolAccount.upline_id, name: kolAccount.name, tierCode: kolAccount.tier_code, mustChangePassword: kolAccount.must_change_password === 1 }, expiresIn: 43200 });
+});
+
+app.post("/api/v1/auth/logout", async (context) => {
+  const claim = await readSessionToken(context.req.header("Authorization"), context.env.ADMIN_API_KEY);
+  if (claim?.role === "kol" && claim.sid) {
+    await context.env.DB.prepare("UPDATE kol_sessions SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1").bind(claim.sid).run();
+  }
+  return context.json({ status: "ok" });
 });
 
 app.use("/api/v1/operator/*", async (context, next) => {
-  if (!await readSessionToken(context.req.header("Authorization"), context.env.ADMIN_API_KEY)) {
+  const session = await readSessionToken(context.req.header("Authorization"), context.env.ADMIN_API_KEY);
+  if (!session || (session.role !== "admin" && session.role !== "operator")) {
     return context.json({ error: "unauthorized", message: "Sesi operator tidak valid atau sudah berakhir" }, 401);
   }
   return next();
+});
+
+app.use("/api/v1/kol/*", async (context, next) => {
+  if (!await readActiveKolSession(context.req.header("Authorization"), context.env)) {
+    return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid atau sudah berakhir" }, 401);
+  }
+  return next();
+});
+
+app.get("/api/v1/kol/profile", async (context) => {
+  const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
+  if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
+  const profile = await context.env.DB.prepare(
+    `SELECT k.upline_id, k.name, k.tier_code, k.status
+     FROM kols k WHERE k.id = ?1 AND k.upline_id = ?2`,
+  ).bind(session.kolId, session.uplineId).first<{ upline_id: string; name: string; tier_code: string | null; status: string }>();
+  if (!profile) return context.json({ error: "not_found", message: "Profil KOL tidak ditemukan" }, 404);
+  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status });
 });
 
 app.get("/api/v1/db/health", async (context) => {

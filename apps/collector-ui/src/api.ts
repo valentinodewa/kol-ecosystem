@@ -97,9 +97,23 @@ export const authApi = {
     if (!response.ok || !body.token || !body.user) throw new Error(body.message ?? "Login gagal");
     sessionStorage.setItem(tokenKey, body.token); sessionStorage.setItem(expiryKey, String(Date.now() + (body.expiresIn ?? 43200) * 1000)); sessionStorage.setItem("kol-operator-user", body.user.username); sessionStorage.setItem("kol-operator-role", body.user.role); return body.user;
   },
-  logout: () => { sessionStorage.removeItem(tokenKey); sessionStorage.removeItem(expiryKey); sessionStorage.removeItem("kol-auth-token-v2"); sessionStorage.removeItem("kol-operator-token"); sessionStorage.removeItem("kol-operator-user"); sessionStorage.removeItem("kol-operator-role"); },
+  logout: async () => {
+    const token = sessionToken();
+    if (token) await fetch(`${remoteApi}/api/v1/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined);
+    sessionStorage.removeItem(tokenKey); sessionStorage.removeItem(expiryKey); sessionStorage.removeItem("kol-auth-token-v2"); sessionStorage.removeItem("kol-operator-token"); sessionStorage.removeItem("kol-operator-user"); sessionStorage.removeItem("kol-operator-role");
+  },
   username: () => sessionStorage.getItem("kol-operator-user"),
   role: () => sessionStorage.getItem("kol-operator-role"),
+};
+
+export const kolPortalApi = {
+  profile: async () => {
+    const token = sessionToken();
+    const response = await fetch(`${remoteApi}/api/v1/kol/profile`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const body = await response.json().catch(() => null) as { uplineId?: string; name?: string; tierCode?: string | null; status?: string; message?: string } | null;
+    if (!response.ok || !body?.uplineId || !body.name) throw new Error(body?.message ?? `Profil KOL gagal dimuat (${response.status})`);
+    return body as { uplineId: string; name: string; tierCode: string | null; status: string };
+  },
 };
 
 export const missionApi = {

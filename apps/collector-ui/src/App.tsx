@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { authApi, kolApi, missionApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolRecord, type MissionInput, type MissionRecord } from "./api";
+import { authApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolRecord, type MissionInput, type MissionRecord } from "./api";
 import { mergeWorkbooks, parseFinancialWorkbook, parseNmatWorkbook, parseRegistrationWorkbook, type ImportRow } from "./workbooks";
 
 type Page = "home" | "performance" | "daily" | "master" | "monthly" | "missions" | "queries" | "history" | "settings";
@@ -117,7 +117,14 @@ function DropZone({ kind, title, hint, file, onFile, workbook = false }: { kind:
 }
 
 function Header({ title, subtitle }: { title: string; subtitle: string }) {
-  return <header className="page-header"><div><p className="eyebrow">KOL OPERATIONS</p><h1>{title}</h1><p>{subtitle}</p></div><div className="header-session"><div className="connection"><span />API staging terhubung</div><div className="session-user"><strong>{authApi.username() ?? "Local admin"}</strong><small>{authApi.role() === "admin" ? "Super admin" : authApi.role() === "operator" ? "Operator" : "Administrator"}</small></div><button className="header-logout" onClick={() => { authApi.logout(); location.reload(); }}>Keluar</button></div></header>;
+  return <header className="page-header"><div><p className="eyebrow">KOL OPERATIONS</p><h1>{title}</h1><p>{subtitle}</p></div><div className="header-session"><div className="connection"><span />API development terhubung</div><div className="session-user"><strong>{authApi.username() ?? "Local admin"}</strong><small>{authApi.role() === "admin" ? "Super admin" : authApi.role() === "operator" ? "Operator" : "Administrator"}</small></div><button className="header-logout" onClick={() => { void authApi.logout().finally(() => location.reload()); }}>Keluar</button></div></header>;
+}
+
+function KolPortalFoundation({ onLogout }: { onLogout: () => void }) {
+  const [profile, setProfile] = useState<{ uplineId: string; name: string; tierCode: string | null; status: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void kolPortalApi.profile().then(setProfile).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Profil KOL gagal dimuat")); }, []);
+  return <div className="kol-foundation-shell"><header><span className="brand-mark">K</span><div><strong>Fastpay KOL Portal</strong><small>Development preview</small></div><button onClick={() => { void authApi.logout().finally(onLogout); }}>Keluar</button></header><main><p className="eyebrow">TAHAP 1 · FONDASI AKUN</p><h1>{profile ? `Halo, ${profile.name}` : "Portal KOL"}</h1><p>Area ini terpisah dari portal operasional tim. Menu misi, performa, dan komisi akan ditambahkan pada tahap berikutnya.</p>{error ? <div className="api-message api-error"><strong>Gagal</strong><span>{error}</span></div> : <section><article><small>Upline ID</small><strong>{profile?.uplineId ?? "Memuat…"}</strong></article><article><small>Tier</small><strong>{profile?.tierCode ?? "Belum diatur"}</strong></article><article><small>Status</small><strong>{profile?.status === "active" ? "Aktif" : "Memuat…"}</strong></article></section>}<div className="kol-foundation-notice"><strong>Akses aman sudah aktif</strong><span>Akun ini hanya dapat membaca data milik KOL yang terhubung dan tidak memiliki akses ke menu internal.</span></div></main></div>;
 }
 
 export function App() {
@@ -361,13 +368,15 @@ export function App() {
 
   function choosePage(next: Page) { setPage(next); setMobileOpen(false); }
 
-  if (!authenticated) return <div className="login-shell"><form className="login-card" onSubmit={(event) => { event.preventDefault(); void submitLogin(event.currentTarget); }}><span className="brand-mark">K</span><p className="eyebrow">KOL OPERATIONS</p><h1>Masuk ke workspace</h1><p>Gunakan akun operator yang diberikan administrator.</p><label>Username<input name="username" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label>{loginError&&<div className="api-message api-error"><span>{loginError}</span></div>}<button className="primary-button" disabled={loginLoading}>{loginLoading?"Memeriksa…":"Masuk"}</button></form></div>;
+  if (!authenticated) return <div className="login-shell"><form className="login-card" onSubmit={(event) => { event.preventDefault(); void submitLogin(event.currentTarget); }}><span className="brand-mark">K</span><p className="eyebrow">FASTPAY KOL ECOSYSTEM</p><h1>Masuk ke portal</h1><p>Gunakan akun yang diberikan administrator.</p><label>Username<input name="username" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label>{loginError&&<div className="api-message api-error"><span>{loginError}</span></div>}<button className="primary-button" disabled={loginLoading}>{loginLoading?"Memeriksa…":"Masuk"}</button></form></div>;
+
+  if (authApi.role() === "kol") return <KolPortalFoundation onLogout={() => setAuthenticated(false)} />;
 
   return <div className="portal-shell">
     <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
       <div className="brand"><span className="brand-mark">K</span><span><strong>KOL Operations</strong><small>Local workspace</small></span></div>
       <nav aria-label="Navigasi utama">{nav.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => choosePage(item.id)}><span>{item.code}</span>{item.label}{["queries", "history", "settings"].includes(item.id) ? <small>Segera</small> : null}</button>)}</nav>
-      <div className="sidebar-footer"><div className="avatar">{(authApi.username() ?? "AD").slice(0,2).toUpperCase()}</div><div><strong>{authApi.username() ?? "Administrator"}</strong><small>{authApi.role()==="admin"?"Super admin":authApi.role()==="operator"?"Operator":"Local admin"}</small></div><button className="logout-button" onClick={()=>{authApi.logout();setAuthenticated(false)}}>Keluar</button></div>
+      <div className="sidebar-footer"><div className="avatar">{(authApi.username() ?? "AD").slice(0,2).toUpperCase()}</div><div><strong>{authApi.username() ?? "Administrator"}</strong><small>{authApi.role()==="admin"?"Super admin":authApi.role()==="operator"?"Operator":"Local admin"}</small></div><button className="logout-button" onClick={()=>{void authApi.logout().finally(()=>setAuthenticated(false))}}>Keluar</button></div>
     </aside>
     <div className="workspace">
       <div className="mobile-bar"><button onClick={() => setMobileOpen((value) => !value)}>☰</button><strong>KOL Operations</strong><span /></div>
