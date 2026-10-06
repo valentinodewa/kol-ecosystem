@@ -36,7 +36,7 @@ export type MissionTarget = { metric: "registered" | "active" | "nmat" | "transa
 export type MissionRecord = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "draft" | "active" | "completed" | "cancelled"; participantTarget: number; participantCount: number; budgetAmount: number; targets: MissionTarget[]; createdAt: string; updatedAt: string };
 export type MissionInput = Omit<MissionRecord, "id" | "participantCount" | "createdAt" | "updatedAt">;
 
-const remoteApi = "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
+const remoteApi = import.meta.env.VITE_API_URL ?? "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
 const tokenKey = "kol-auth-token-v3";
 const expiryKey = "kol-auth-expiry-v3";
 

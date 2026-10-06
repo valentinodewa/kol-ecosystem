@@ -47,6 +47,26 @@
 					"migrations_dir": "../../migrations"
 				}
 			]
+		},
+		"koldev": {
+			"name": "kol-ecosystem-api-kol-dev",
+			"vars": {
+				"APP_ENV": "development"
+			},
+			"secrets": {
+				"required": [
+					"INGESTION_API_KEY",
+					"ADMIN_API_KEY"
+				]
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "kol-ecosystem-kol-dev",
+					"database_id": "143db6d7-0c3d-4754-9d94-9b1362e1c761",
+					"migrations_dir": "../../migrations"
+				}
+			]
 		}
 	}
 }
