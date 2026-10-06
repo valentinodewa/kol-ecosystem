@@ -33,7 +33,7 @@ export type DailyPerformanceRow = {
   syncedAt: string;
 };
 export type MissionTarget = { metric: "registered" | "active" | "nmat" | "transactions" | "revenue"; targetValue: number };
-export type MissionRecord = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "draft" | "active" | "completed" | "cancelled"; participantTarget: number; participantCount: number; targets: MissionTarget[]; createdAt: string; updatedAt: string };
+export type MissionRecord = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "draft" | "active" | "completed" | "cancelled"; participantTarget: number; participantCount: number; budgetAmount: number; targets: MissionTarget[]; createdAt: string; updatedAt: string };
 export type MissionInput = Omit<MissionRecord, "id" | "participantCount" | "createdAt" | "updatedAt">;
 
 const remoteApi = "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
