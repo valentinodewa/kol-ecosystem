@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { authApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolRecord, type MissionInput, type MissionRecord } from "./api";
+import { authApi, kolApi, kolPortalApi, missionApi, performanceApi, type DailyPerformanceRow, type KolInput, type KolPortalMission, type KolPortalProfile, type KolRecord, type MissionInput, type MissionRecord } from "./api";
 import { mergeWorkbooks, parseFinancialWorkbook, parseNmatWorkbook, parseRegistrationWorkbook, type ImportRow } from "./workbooks";
 
 type Page = "home" | "performance" | "daily" | "master" | "monthly" | "missions" | "queries" | "history" | "settings";
@@ -121,10 +121,27 @@ function Header({ title, subtitle }: { title: string; subtitle: string }) {
 }
 
 function KolPortalFoundation({ onLogout }: { onLogout: () => void }) {
-  const [profile, setProfile] = useState<{ uplineId: string; name: string; tierCode: string | null; status: string } | null>(null);
+  const [profile, setProfile] = useState<KolPortalProfile | null>(null);
+  const [missions, setMissions] = useState<KolPortalMission[]>([]);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void kolPortalApi.profile().then(setProfile).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Profil KOL gagal dimuat")); }, []);
-  return <div className="kol-foundation-shell"><header><span className="brand-mark">K</span><div><strong>Fastpay KOL Portal</strong><small>Development preview</small></div><button onClick={() => { void authApi.logout().finally(onLogout); }}>Keluar</button></header><main><p className="eyebrow">TAHAP 1 · FONDASI AKUN</p><h1>{profile ? `Halo, ${profile.name}` : "Portal KOL"}</h1><p>Area ini terpisah dari portal operasional tim. Menu misi, performa, dan komisi akan ditambahkan pada tahap berikutnya.</p>{error ? <div className="api-message api-error"><strong>Gagal</strong><span>{error}</span></div> : <section><article><small>Upline ID</small><strong>{profile?.uplineId ?? "Memuat…"}</strong></article><article><small>Tier</small><strong>{profile?.tierCode ?? "Belum diatur"}</strong></article><article><small>Status</small><strong>{profile?.status === "active" ? "Aktif" : "Memuat…"}</strong></article></section>}<div className="kol-foundation-notice"><strong>Akses aman sudah aktif</strong><span>Akun ini hanya dapat membaca data milik KOL yang terhubung dan tidak memiliki akses ke menu internal.</span></div></main></div>;
+  const [loading, setLoading] = useState(true);
+  const loadPortal = async () => {
+    setLoading(true); setError(null);
+    try {
+      const [nextProfile, nextMissions] = await Promise.all([kolPortalApi.profile(), kolPortalApi.missions()]);
+      setProfile(nextProfile); setMissions(nextMissions.items);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Portal KOL gagal dimuat"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void loadPortal(); }, []);
+  const targetLabel = (metric: KolPortalMission["targets"][number]["metric"]) => ({ registered: "Register", active: "Aktivasi", nmat: "NMAT", transactions: "Transaksi", revenue: "Revenue" })[metric];
+  const missionState = (mission: KolPortalMission) => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (mission.startDate > today) return "Akan datang";
+    if (mission.endDate < today) return "Berakhir";
+    return "Berjalan";
+  };
+  return <div className="kol-foundation-shell"><header><span className="brand-mark">K</span><div><strong>Fastpay KOL Portal</strong><small>Development preview · akses pribadi</small></div><div className="kol-header-actions"><button onClick={() => void loadPortal()} disabled={loading}>{loading ? "Memuat…" : "Perbarui"}</button><button onClick={() => { void authApi.logout().finally(onLogout); }}>Keluar</button></div></header><main><div className="kol-hero"><div><p className="eyebrow">PORTAL KOL · TAHAP 2</p><h1>{profile ? `Halo, ${profile.name}` : "Portal KOL"}</h1><p>Lihat identitas dan mission yang sesuai dengan tier terbaru Anda.</p></div><span className={`kol-tier-badge tier-${(profile?.tierCode ?? "belum-diatur").toLowerCase().replaceAll(" ", "-")}`}>{profile?.tierCode ?? "Tier belum diatur"}</span></div>{error ? <div className="api-message api-error"><strong>Gagal</strong><span>{error}</span></div> : <><section className="kol-profile-grid"><article><small>Upline ID</small><strong>{profile?.uplineId ?? "Memuat…"}</strong></article><article><small>Tier saat ini</small><strong>{profile?.tierCode ?? "Belum diatur"}</strong></article><article><small>Status kerja sama</small><strong>{profile?.status === "active" ? "Aktif" : "Tidak aktif"}</strong></article><article><small>PIC</small><strong>{profile?.picName ?? "Belum ditentukan"}</strong></article></section><section className="kol-mission-section"><div className="kol-section-heading"><div><p className="eyebrow">MISSION UNTUK TIER {profile?.tierCode ?? "—"}</p><h2>Mission Anda</h2><p>Daftar ini otomatis mengikuti tier terbaru di master KOL.</p></div><span>{missions.length} mission aktif</span></div>{loading ? <div className="kol-empty">Memuat mission…</div> : missions.length === 0 ? <div className="kol-empty"><strong>Belum ada mission aktif</strong><p>Mission draft tidak ditampilkan. Saat tim mengaktifkan mission untuk tier {profile?.tierCode ?? "Anda"}, mission akan muncul di sini.</p></div> : <div className="kol-mission-grid">{missions.map((mission) => <article key={mission.id}><div className="kol-mission-top"><span className="kol-mission-state">{missionState(mission)}</span><span>{mission.tierCode}</span></div><h3>{mission.name}</h3><p>{mission.description ?? "Tanpa deskripsi"}</p><div className="kol-mission-period">{dateFormat.format(new Date(`${mission.startDate}T00:00:00Z`))} – {dateFormat.format(new Date(`${mission.endDate}T00:00:00Z`))}</div><div className="kol-mission-targets">{mission.targets.map((target) => <div key={target.metric}><small>Target {targetLabel(target.metric)}</small><strong>{target.metric === "revenue" ? currencyFormat.format(target.targetValue) : numberFormat.format(target.targetValue)}</strong></div>)}</div>{mission.rewardDescription ? <div className="kol-reward"><small>Reward</small><strong>{mission.rewardDescription}</strong></div> : null}</article>)}</div>}</section></>}<div className="kol-foundation-notice"><strong>Mission mengikuti tier secara otomatis</strong><span>Jika tim memindahkan tier Anda, tekan “Perbarui” atau masuk kembali. Portal membaca tier terbaru langsung dari master KOL dan tidak menggunakan tier lama dari sesi.</span></div></main></div>;
 }
 
 export function App() {

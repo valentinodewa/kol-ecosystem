@@ -35,6 +35,8 @@ export type DailyPerformanceRow = {
 export type MissionTarget = { metric: "registered" | "active" | "nmat" | "transactions" | "revenue"; targetValue: number };
 export type MissionRecord = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "draft" | "active" | "completed" | "cancelled"; participantTarget: number; participantCount: number; budgetAmount: number; targets: MissionTarget[]; createdAt: string; updatedAt: string };
 export type MissionInput = Omit<MissionRecord, "id" | "participantCount" | "createdAt" | "updatedAt">;
+export type KolPortalProfile = { uplineId: string; name: string; tierCode: string | null; status: string; joinedAt: string | null; picName: string | null };
+export type KolPortalMission = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "active"; targets: MissionTarget[] };
 
 const remoteApi = import.meta.env.VITE_API_URL ?? "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
 const tokenKey = "kol-auth-token-v3";
@@ -107,12 +109,19 @@ export const authApi = {
 };
 
 export const kolPortalApi = {
-  profile: async () => {
+  profile: async (): Promise<KolPortalProfile> => {
     const token = sessionToken();
     const response = await fetch(`${remoteApi}/api/v1/kol/profile`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    const body = await response.json().catch(() => null) as { uplineId?: string; name?: string; tierCode?: string | null; status?: string; message?: string } | null;
+    const body = await response.json().catch(() => null) as (Partial<KolPortalProfile> & { message?: string }) | null;
     if (!response.ok || !body?.uplineId || !body.name) throw new Error(body?.message ?? `Profil KOL gagal dimuat (${response.status})`);
-    return body as { uplineId: string; name: string; tierCode: string | null; status: string };
+    return body as KolPortalProfile;
+  },
+  missions: async (): Promise<{ tierCode: string | null; items: KolPortalMission[] }> => {
+    const token = sessionToken();
+    const response = await fetch(`${remoteApi}/api/v1/kol/missions`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const body = await response.json().catch(() => null) as { tierCode?: string | null; items?: KolPortalMission[]; message?: string } | null;
+    if (!response.ok || !body || !Array.isArray(body.items)) throw new Error(body?.message ?? `Mission KOL gagal dimuat (${response.status})`);
+    return { tierCode: body.tierCode ?? null, items: body.items };
   },
 };
 

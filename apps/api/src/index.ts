@@ -253,11 +253,51 @@ app.get("/api/v1/kol/profile", async (context) => {
   const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
   if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
   const profile = await context.env.DB.prepare(
-    `SELECT k.upline_id, k.name, k.tier_code, k.status
+    `SELECT k.upline_id, k.name, k.tier_code, k.status, k.joined_at, k.pic_name
      FROM kols k WHERE k.id = ?1 AND k.upline_id = ?2`,
-  ).bind(session.kolId, session.uplineId).first<{ upline_id: string; name: string; tier_code: string | null; status: string }>();
+  ).bind(session.kolId, session.uplineId).first<{ upline_id: string; name: string; tier_code: string | null; status: string; joined_at: string | null; pic_name: string | null }>();
   if (!profile) return context.json({ error: "not_found", message: "Profil KOL tidak ditemukan" }, 404);
-  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status });
+  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status, joinedAt: profile.joined_at, picName: profile.pic_name });
+});
+
+app.get("/api/v1/kol/missions", async (context) => {
+  const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
+  if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
+
+  // Tier selalu dibaca dari master KOL terbaru. Tier tidak pernah dipercaya dari token atau query browser.
+  const kol = await context.env.DB.prepare(
+    "SELECT tier_code FROM kols WHERE id = ?1 AND upline_id = ?2 AND status = 'active'",
+  ).bind(session.kolId, session.uplineId).first<{ tier_code: string | null }>();
+  if (!kol) return context.json({ error: "not_found", message: "Profil KOL tidak ditemukan" }, 404);
+  if (!kol.tier_code) return context.json({ tierCode: null, items: [] });
+
+  const missions = await context.env.DB.prepare(
+    `SELECT id, name, description, tier_code, start_date, end_date, reward_description, status
+     FROM missions
+     WHERE status = 'active' AND UPPER(tier_code) = UPPER(?1)
+     ORDER BY start_date ASC, created_at ASC`,
+  ).bind(kol.tier_code).all<{ id: string; name: string; description: string | null; tier_code: string; start_date: string; end_date: string; reward_description: string | null; status: "active" }>();
+  const targets = await context.env.DB.prepare(
+    `SELECT mt.mission_id, mt.metric, mt.target_value
+     FROM mission_targets mt INNER JOIN missions m ON m.id = mt.mission_id
+     WHERE m.status = 'active' AND UPPER(m.tier_code) = UPPER(?1)
+     ORDER BY mt.position ASC, mt.id ASC`,
+  ).bind(kol.tier_code).all<{ mission_id: string; metric: "registered" | "active" | "nmat" | "transactions" | "revenue"; target_value: number }>();
+
+  return context.json({
+    tierCode: kol.tier_code,
+    items: missions.results.map((mission) => ({
+      id: mission.id,
+      name: mission.name,
+      description: mission.description,
+      tierCode: mission.tier_code,
+      startDate: mission.start_date,
+      endDate: mission.end_date,
+      rewardDescription: mission.reward_description,
+      status: mission.status,
+      targets: targets.results.filter((target) => target.mission_id === mission.id).map((target) => ({ metric: target.metric, targetValue: target.target_value })),
+    })),
+  });
 });
 
 app.get("/api/v1/db/health", async (context) => {
