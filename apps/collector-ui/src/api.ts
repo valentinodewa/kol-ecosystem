@@ -35,7 +35,7 @@ export type DailyPerformanceRow = {
 export type MissionTarget = { metric: "registered" | "active" | "nmat" | "transactions" | "revenue"; targetValue: number };
 export type MissionRecord = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "draft" | "active" | "completed" | "cancelled"; participantTarget: number; participantCount: number; budgetAmount: number; targets: MissionTarget[]; createdAt: string; updatedAt: string };
 export type MissionInput = Omit<MissionRecord, "id" | "participantCount" | "createdAt" | "updatedAt">;
-export type KolPortalProfile = { uplineId: string; name: string; tierCode: string | null; status: string; joinedAt: string | null; picName: string | null };
+export type KolPortalProfile = { uplineId: string; name: string; tierCode: string | null; status: string; joinedAt: string | null; picName: string | null; mustChangePassword: boolean };
 export type KolPortalMission = { id: string; name: string; description: string | null; tierCode: string; startDate: string; endDate: string; rewardDescription: string | null; status: "active"; targets: MissionTarget[] };
 
 const remoteApi = import.meta.env.VITE_API_URL ?? "https://kol-ecosystem-api-staging.inovalentino99tele.workers.dev";
@@ -130,6 +130,13 @@ export const kolPortalApi = {
     const body = await response.json().catch(() => null) as { periodStart?: string; periodEnd?: string; uplineId?: string; items?: DailyPerformanceRow[]; message?: string } | null;
     if (!response.ok || !body?.periodStart || !body.periodEnd || !body.uplineId || !Array.isArray(body.items)) throw new Error(body?.message ?? `Performa KOL gagal dimuat (${response.status})`);
     return body as { periodStart: string; periodEnd: string; uplineId: string; items: DailyPerformanceRow[] };
+  },
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const token = sessionToken();
+    const response = await fetch(`${remoteApi}/api/v1/kol/change-password`, { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ currentPassword, newPassword }) });
+    const body = await response.json().catch(() => null) as { status?: string; reauthenticate?: boolean; message?: string } | null;
+    if (!response.ok || body?.status !== "password_changed") throw new Error(body?.message ?? `Password gagal diubah (${response.status})`);
+    return body;
   },
 };
 

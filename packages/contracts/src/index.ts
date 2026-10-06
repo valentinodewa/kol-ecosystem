@@ -246,6 +246,20 @@ export const loginRequestSchema = z.object({
   username: z.string().trim().min(1).max(80),
   password: z.string().min(1).max(200),
 });
+
+const strongPasswordSchema = z.string().min(10, "Password minimal 10 karakter").max(200)
+  .regex(/[a-z]/, "Password harus memiliki huruf kecil")
+  .regex(/[A-Z]/, "Password harus memiliki huruf besar")
+  .regex(/[0-9]/, "Password harus memiliki angka")
+  .regex(/[^A-Za-z0-9]/, "Password harus memiliki karakter khusus");
+
+export const kolPasswordChangeRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: strongPasswordSchema,
+}).refine((value) => value.currentPassword !== value.newPassword, {
+  message: "Password baru harus berbeda dari password saat ini",
+  path: ["newPassword"],
+});
 export const dailyPerformanceIngestionRequestSchema = z.object({
   syncRunId: z.uuid(),
   periodStart: isoDateSchema,

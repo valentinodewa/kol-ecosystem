@@ -11,6 +11,7 @@ import {
   dailyPerformanceQuerySchema,
   kolPerformanceQuerySchema,
   kolPerformanceResponseSchema,
+  kolPasswordChangeRequestSchema,
   kolCreateRequestSchema,
   kolImportRequestSchema,
   kolListResponseSchema,
@@ -176,6 +177,14 @@ async function validPassword(password: string, salt: string, expectedHash: strin
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+async function createPasswordHash(password: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = 100000;
+  const key = await crypto.subtle.importKey("raw", textEncoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const hash = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256));
+  return { salt: bytesToBase64Url(salt), hash: bytesToBase64Url(hash), iterations };
+}
+
 async function hasValidBearerToken(authorization: string | undefined, expectedToken: string) {
   if (!authorization?.startsWith("Bearer ")) {
     return false;
@@ -256,11 +265,38 @@ app.get("/api/v1/kol/profile", async (context) => {
   const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
   if (!session) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
   const profile = await context.env.DB.prepare(
-    `SELECT k.upline_id, k.name, k.tier_code, k.status, k.joined_at, k.pic_name
-     FROM kols k WHERE k.id = ?1 AND k.upline_id = ?2`,
-  ).bind(session.kolId, session.uplineId).first<{ upline_id: string; name: string; tier_code: string | null; status: string; joined_at: string | null; pic_name: string | null }>();
+    `SELECT k.upline_id, k.name, k.tier_code, k.status, k.joined_at, k.pic_name,
+            a.must_change_password
+     FROM kols k INNER JOIN kol_accounts a ON a.kol_id = k.id
+     WHERE k.id = ?1 AND k.upline_id = ?2 AND a.username = ?3 COLLATE NOCASE`,
+  ).bind(session.kolId, session.uplineId, session.sub).first<{ upline_id: string; name: string; tier_code: string | null; status: string; joined_at: string | null; pic_name: string | null; must_change_password: number }>();
   if (!profile) return context.json({ error: "not_found", message: "Profil KOL tidak ditemukan" }, 404);
-  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status, joinedAt: profile.joined_at, picName: profile.pic_name });
+  return context.json({ uplineId: profile.upline_id, name: profile.name, tierCode: profile.tier_code, status: profile.status, joinedAt: profile.joined_at, picName: profile.pic_name, mustChangePassword: profile.must_change_password === 1 });
+});
+
+app.post("/api/v1/kol/change-password", zValidator("json", kolPasswordChangeRequestSchema), async (context) => {
+  const session = await readActiveKolSession(context.req.header("Authorization"), context.env);
+  if (!session?.sid) return context.json({ error: "unauthorized", message: "Sesi KOL tidak valid" }, 401);
+  const input = context.req.valid("json");
+  const account = await context.env.DB.prepare(
+    `SELECT id, password_salt, password_hash, password_iterations
+     FROM kol_accounts WHERE kol_id = ?1 AND username = ?2 COLLATE NOCASE AND is_active = 1`,
+  ).bind(session.kolId, session.sub).first<{ id: number; password_salt: string; password_hash: string; password_iterations: number }>();
+  if (!account || !await validPassword(input.currentPassword, account.password_salt, account.password_hash, account.password_iterations)) {
+    return context.json({ error: "invalid_current_password", message: "Password saat ini tidak sesuai" }, 400);
+  }
+  const next = await createPasswordHash(input.newPassword);
+  const changedAt = new Date().toISOString();
+  await context.env.DB.batch([
+    context.env.DB.prepare(
+      `UPDATE kol_accounts SET password_salt = ?1, password_hash = ?2, password_iterations = ?3,
+              must_change_password = 0, updated_at = ?4 WHERE id = ?5`,
+    ).bind(next.salt, next.hash, next.iterations, changedAt, account.id),
+    context.env.DB.prepare(
+      `UPDATE kol_sessions SET revoked_at = ?1 WHERE account_id = ?2 AND revoked_at IS NULL`,
+    ).bind(changedAt, account.id),
+  ]);
+  return context.json({ status: "password_changed", reauthenticate: true });
 });
 
 app.get("/api/v1/kol/missions", async (context) => {
