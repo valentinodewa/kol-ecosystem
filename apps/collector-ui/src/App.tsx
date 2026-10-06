@@ -5,7 +5,7 @@ import { mergeWorkbooks, parseFinancialWorkbook, parseNmatWorkbook, parseRegistr
 type Page = "home" | "performance" | "daily" | "master" | "monthly" | "missions" | "queries" | "history" | "settings";
 type UploadKind = "registration" | "nmat" | "financial" | "master" | "monthly";
 type UploadedFile = { name: string; size: string; rows: number };
-type Kol = { id: number; upline: string; name: string; tier: string; status: "Aktif" | "Nonaktif"; pic: string };
+type Kol = { id: number; upline: string; name: string; tier: string; status: "Aktif" | "Nonaktif"; pic: string; notes: string };
 type DailyMetric = "nmat" | "registered" | "active" | "transactions" | "revenue" | "activationCommission" | "activationRevenue";
 type DailySummary = { date: string; registered: number; active: number; nmat: number; transactions: number; revenue: number; activationCommission: number; activationRevenue: number; cumulativeNmat: number };
 
@@ -28,6 +28,7 @@ const mapKol = (kol: KolRecord): Kol => ({
   tier: kol.tierCode ?? "Belum diatur",
   status: kol.status === "active" ? "Aktif" : "Nonaktif",
   pic: kol.picName ?? "—",
+  notes: kol.notes ?? "",
 });
 
 function fileSize(bytes: number) {
@@ -72,7 +73,7 @@ async function parseMasterCsv(file: File): Promise<KolInput[]> {
     const status = get("status").toLowerCase();
     const uplineId = get("upline_id").toUpperCase(); const name = get("name");
     if (!uplineId || !name) throw new Error(`Baris ${index + 2}: upline_id dan name wajib diisi`);
-    return { uplineId, name, tierCode: get("tier_code") || null, picName: get("pic_name") || null, status: status === "inactive" || status === "nonaktif" ? "inactive" as const : "active" as const };
+    return { uplineId, name, tierCode: get("tier_code") || null, picName: get("pic_name") || null, notes: get("notes") || null, status: status === "inactive" || status === "nonaktif" ? "inactive" as const : "active" as const };
   });
   if (!rows.length) throw new Error("CSV tidak memiliki baris data");
   if (rows.length > 100) throw new Error("Maksimal 100 KOL per sekali import");
@@ -253,6 +254,7 @@ export function App() {
       name: String(data.get("name")).trim(),
       tierCode: String(data.get("tier")) || null,
       picName: String(data.get("pic")).trim() || null,
+      notes: String(data.get("notes")).trim() || null,
       status: data.get("status") === "Aktif" ? "active" : "inactive",
     };
     setMasterSaving(true); setMasterError(null); setMasterNotice(null);
@@ -339,8 +341,8 @@ export function App() {
     setMasterSaving(true); setMasterError(null); setMasterNotice(null);
     try {
       const { items } = await kolApi.list();
-      const header = ["upline_id", "name", "tier_code", "pic_name", "status"];
-      const rows = items.map((item) => [item.uplineId, item.name, item.tierCode, item.picName, item.status].map(csvValue).join(","));
+      const header = ["upline_id", "name", "tier_code", "pic_name", "status", "notes"];
+      const rows = items.map((item) => [item.uplineId, item.name, item.tierCode, item.picName, item.status, item.notes].map(csvValue).join(","));
       const url = URL.createObjectURL(new Blob(["\uFEFF", [header.join(","), ...rows].join("\r\n")], { type: "text/csv;charset=utf-8" }));
       const anchor = document.createElement("a"); anchor.href = url; anchor.download = `master-kol-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
       setMasterNotice(`${items.length} KOL terbaru dari D1 berhasil diekspor.`);
@@ -414,9 +416,9 @@ export function App() {
           {masterError && <div className="api-message api-error"><strong>Gagal</strong><span>{masterError}</span></div>}
           {masterNotice && <div className="api-message api-success"><strong>Berhasil</strong><span>{masterNotice}</span></div>}
           {files.master && <div className="import-preview"><span>CSV lolos validasi</span><strong>{files.master.name}</strong><small>{masterImportRows.length} baris · upsert berdasarkan upline_id</small><button className="text-button" disabled={masterSaving} onClick={() => void importMasterKols()}>{masterSaving ? "Mengimpor…" : "Import ke database"}</button></div>}
-          <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>PIC</th><th>Status</th><th /></tr></thead><tbody>{masterLoading ? <tr><td colSpan={6}>Memuat data staging…</td></tr> : visibleKols.length === 0 ? <tr><td colSpan={6}>Belum ada data KOL yang sesuai.</td></tr> : visibleKols.map((kol) => <tr key={kol.id}><td><strong className="upline">{kol.upline}</strong></td><td><div className="person"><span>{kol.name.slice(0, 2).toUpperCase()}</span><strong>{kol.name}</strong></div></td><td><span className={`tier tier-${kol.tier.toLowerCase().replaceAll(" ", "-")}`}>{kol.tier}</span></td><td>{kol.pic}</td><td><span className={`status status-${kol.status.toLowerCase()}`}>{kol.status}</span></td><td><button className="edit-button" onClick={() => { setEditingKol(kol); setShowForm(true); }}>Edit</button></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleKols.length} dari {kols.length} KOL</span></div>
+          <div className="table-wrap"><table><thead><tr><th>Upline ID</th><th>Nama KOL</th><th>Tier</th><th>PIC</th><th>Keterangan</th><th>Status</th><th /></tr></thead><tbody>{masterLoading ? <tr><td colSpan={7}>Memuat data staging…</td></tr> : visibleKols.length === 0 ? <tr><td colSpan={7}>Belum ada data KOL yang sesuai.</td></tr> : visibleKols.map((kol) => <tr key={kol.id}><td><strong className="upline">{kol.upline}</strong></td><td><div className="person"><span>{kol.name.slice(0, 2).toUpperCase()}</span><strong>{kol.name}</strong></div></td><td><span className={`tier tier-${kol.tier.toLowerCase().replaceAll(" ", "-")}`}>{kol.tier}</span></td><td>{kol.pic}</td><td className="kol-notes" title={kol.notes}>{kol.notes || "—"}</td><td><span className={`status status-${kol.status.toLowerCase()}`}>{kol.status}</span></td><td><button className="edit-button" onClick={() => { setEditingKol(kol); setShowForm(true); }}>Edit</button></td></tr>)}</tbody></table></div><div className="table-footer"><span>Menampilkan {visibleKols.length} dari {kols.length} KOL</span></div>
         </section>
-        {showForm && <div className="modal-backdrop" onMouseDown={() => !masterSaving && setShowForm(false)}><form className="modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveKol(event.currentTarget); }}><div className="modal-heading"><div><p className="eyebrow">MASTER KOL</p><h2>{editingKol ? "Edit data KOL" : "Tambah KOL baru"}</h2><p>Perubahan akan langsung disimpan ke database staging.</p></div><button type="button" disabled={masterSaving} onClick={() => setShowForm(false)}>×</button></div><label>Upline ID<input name="upline" placeholder="Contoh: FA582386" defaultValue={editingKol?.upline} required /></label>{editingKol && <div className="id-warning">Perubahan Upline ID ikut tercatat dalam audit log.</div>}<label>Nama KOL<input name="name" placeholder="Nama lengkap atau nama channel" defaultValue={editingKol?.name} required /></label><div className="form-row"><label>Tier<select name="tier" defaultValue={editingKol?.tier === "Belum diatur" ? "" : editingKol?.tier ?? ""}><option value="">Belum diatur</option><option>BARU</option><option>JELEK</option><option>BIASA</option><option>LUMAYAN</option><option>KUAT</option></select></label><label>PIC<input name="pic" placeholder="Nama PIC" defaultValue={editingKol?.pic === "—" ? "" : editingKol?.pic} /></label></div><label>Status<select name="status" defaultValue={editingKol?.status ?? "Aktif"}><option>Aktif</option><option>Nonaktif</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" disabled={masterSaving} onClick={() => setShowForm(false)}>Batal</button><button className="primary-button" disabled={masterSaving} type="submit">{masterSaving ? "Menyimpan…" : editingKol ? "Simpan perubahan" : "Tambah ke daftar"}</button></div></form></div>}
+        {showForm && <div className="modal-backdrop" onMouseDown={() => !masterSaving && setShowForm(false)}><form className="modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void saveKol(event.currentTarget); }}><div className="modal-heading"><div><p className="eyebrow">MASTER KOL</p><h2>{editingKol ? "Edit data KOL" : "Tambah KOL baru"}</h2><p>Perubahan akan langsung disimpan ke database staging.</p></div><button type="button" disabled={masterSaving} onClick={() => setShowForm(false)}>×</button></div><label>Upline ID<input name="upline" placeholder="Contoh: FA582386" defaultValue={editingKol?.upline} required /></label>{editingKol && <div className="id-warning">Perubahan Upline ID ikut tercatat dalam audit log.</div>}<label>Nama KOL<input name="name" placeholder="Nama lengkap atau nama channel" defaultValue={editingKol?.name} required /></label><div className="form-row"><label>Tier<select name="tier" defaultValue={editingKol?.tier === "Belum diatur" ? "" : editingKol?.tier ?? ""}><option value="">Belum diatur</option><option>BARU</option><option>JELEK</option><option>BIASA</option><option>LUMAYAN</option><option>KUAT</option></select></label><label>PIC<input name="pic" placeholder="Nama PIC" defaultValue={editingKol?.pic === "—" ? "" : editingKol?.pic} /></label></div><label>Keterangan<textarea name="notes" rows={3} placeholder="Catatan tambahan tentang KOL" defaultValue={editingKol?.notes ?? ""} /></label><label>Status<select name="status" defaultValue={editingKol?.status ?? "Aktif"}><option>Aktif</option><option>Nonaktif</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" disabled={masterSaving} onClick={() => setShowForm(false)}>Batal</button><button className="primary-button" disabled={masterSaving} type="submit">{masterSaving ? "Menyimpan…" : editingKol ? "Simpan perubahan" : "Tambah ke daftar"}</button></div></form></div>}
       </main>}
       {["queries", "history", "settings"].includes(page) && <main><Header title={nav.find((item) => item.id === page)?.label ?? "Segera hadir"} subtitle="Halaman ini disiapkan untuk fase pengembangan berikutnya." /><section className="coming-soon"><span>{nav.find((item) => item.id === page)?.code}</span><h2>Fondasinya sudah disiapkan.</h2><p>Kita akan mengaktifkan fungsi ini setelah alur Update Performa dan Master KOL disetujui.</p><button className="secondary-button" onClick={() => choosePage("home")}>Kembali ke beranda</button></section></main>}
     </div>
